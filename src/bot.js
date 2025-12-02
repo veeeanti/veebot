@@ -154,9 +154,6 @@ client.on('messageCreate', async (message) => {
       logger.error(`Error handling command: ${error.message}`);
       message.reply('An error occurred while processing your command.');
     }
-  } else {
-    // Check for keyword-based help
-    await checkForKeywordHelp(message);
   }
 
   // AI Response Handling
@@ -434,12 +431,6 @@ async function handleHelpCommand(message, args) {
   helpMessage += `**${config.prefix}help** - Show this help message\n`;
   helpMessage += `**${config.prefix}info** - Show bot information\n`;
 
-  // Add keyword help
-  helpMessage += '\n**Keyword-based help (automatic):**\n';
-  for (const [keyword, description] of Object.entries(config.helpKeywords)) {
-    helpMessage += `*${keyword}* - ${description}\n`;
-  }
-
   message.channel.send(helpMessage);
 }
 
@@ -460,17 +451,6 @@ async function handleInfoCommand(message) {
   message.channel.send({ embeds: [embed] });
 }
 
-async function checkForKeywordHelp(message) {
-  const messageContent = message.content.toLowerCase();
-
-  // Check for help keywords
-  for (const [keyword, description] of Object.entries(config.helpKeywords)) {
-    if (messageContent.includes(keyword)) {
-      message.reply(`I noticed you mentioned "${keyword}". ${description} You can use ${config.prefix}help for more information.`);
-      break;
-    }
-  }
-}
 
 // Login to Discord
 client.login(process.env.DISCORD_TOKEN)
