@@ -226,33 +226,35 @@ async function handleSearchCommand(message, args) {
     const searchResults = await performWebSearch(query);
 
     if (searchResults && searchResults.length > 0) {
-      const result = searchResults[0];
-      await searchMessage.edit(`🔍 Found results for: **${query}**`);
+      await searchMessage.edit(`🔍 Found ${searchResults.length} result(s) for: **${query}**`);
 
-      const embed = {
-        color: 0x0099ff,
-        title: result.title,
-        url: result.url,
-        description: result.description || 'No description available',
-        fields: [
-          {
-            name: 'Search Query',
-            value: query,
-            inline: true
-          },
-          {
-            name: 'Source',
-            value: 'Web Search',
-            inline: true
+      // Send each result as a separate embed
+      for (const [index, result] of searchResults.entries()) {
+        const embed = {
+          color: 0x0099ff,
+          title: `${index + 1}. ${result.title}`,
+          url: result.url,
+          description: result.description || 'No description available',
+          fields: [
+            {
+              name: 'Search Query',
+              value: query,
+              inline: true
+            },
+            {
+              name: 'Source',
+              value: 'Web Search',
+              inline: true
+            }
+          ],
+          timestamp: new Date(),
+          footer: {
+            text: `Result ${index + 1} of ${searchResults.length} | Powered by veeanti`,
           }
-        ],
-        timestamp: new Date(),
-        footer: {
-          text: 'Powered by veeanti, next time just use google.',
-        }
-      };
+        };
 
-      await message.channel.send({ embeds: [embed] });
+        await message.channel.send({ embeds: [embed] });
+      }
     } else {
       await searchMessage.edit('🔍 No results found for that query.');
     }
@@ -264,20 +266,53 @@ async function handleSearchCommand(message, args) {
 
 async function performWebSearch(query) {
   try {
-    // Use a more reliable approach - mock search for now
-    // In production, you would use a proper search API
-    const mockResults = [
-      {
-        title: `Search results for "${query}"`,
-        url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
-        description: `Find information about ${query} on the web`
+    // Use web scraping to get actual search results
+    const searchUrl = `${config.searchEngine}${encodeURIComponent(query)}`;
+    const response = await axios.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
-    ];
+    });
 
-    return mockResults;
+    const $ = cheerio.load(response.data);
+    const results = [];
+
+    // Extract search results from Google search page
+    $('div.g').each((i, element) => {
+      if (i >= 3) return; // Limit to top 3 results
+
+      const titleElement = $(element).find('h3');
+      const urlElement = $(element).find('a');
+      const descriptionElement = $(element).find('div.VwiC3b');
+
+      if (titleElement.length && urlElement.length) {
+        results.push({
+          title: titleElement.text().trim(),
+          url: urlElement.attr('href'),
+          description: descriptionElement.text().trim() || 'No description available'
+        });
+      }
+    });
+
+    // Fallback if no results found
+    if (results.length === 0) {
+      results.push({
+        title: `Search results for "${query}"`,
+        url: searchUrl,
+        description: `Find information about ${query} on the web`
+      });
+    }
+
+    return results;
   } catch (error) {
     logger.error(`Web search failed: ${error.message}`);
-    return [];
+
+    // Return fallback result if scraping fails
+    return [{
+      title: `Search results for "${query}"`,
+      url: `${config.searchEngine}${encodeURIComponent(query)}`,
+      description: `Could not fetch live results. Click to search for ${query}`
+    }];
   }
 }
 
