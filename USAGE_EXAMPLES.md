@@ -32,10 +32,18 @@
 ```
 **Response**:
 ```
-Searching for: discord.js bot tutorial
-**Discord.js Guide - Official Documentation**
-Learn how to create bots with Discord.js
-https://discordjs.guide/
+🔍 Searching for: discord.js bot tutorial...
+🔍 Found results for: discord.js bot tutorial
+```
+
+**Embed Response**:
+```
+📄 Search results for "discord.js bot tutorial"
+Find information about discord.js bot tutorial on the web
+
+🔗 Source: Web Search
+📅 Search Query: discord.js bot tutorial
+💻 Powered by Discord Search Bot
 ```
 
 ### Help Command
