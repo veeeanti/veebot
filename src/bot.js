@@ -228,33 +228,17 @@ async function handleSearchCommand(message, args) {
     if (searchResults && searchResults.length > 0) {
       await searchMessage.edit(`🔍 Found ${searchResults.length} result(s) for: **${query}**`);
 
-      // Send each result as a separate embed
+      // Send results as clickable links
+      let resultsMessage = '**Search Results:**\n';
       for (const [index, result] of searchResults.entries()) {
-        const embed = {
-          color: 0x0099ff,
-          title: `${index + 1}. ${result.title}`,
-          url: result.url,
-          description: result.description || 'No description available',
-          fields: [
-            {
-              name: 'Search Query',
-              value: query,
-              inline: true
-            },
-            {
-              name: 'Source',
-              value: 'Web Search',
-              inline: true
-            }
-          ],
-          timestamp: new Date(),
-          footer: {
-            text: `Result ${index + 1} of ${searchResults.length} | Powered by veeanti`,
-          }
-        };
-
-        await message.channel.send({ embeds: [embed] });
+        resultsMessage += `${index + 1}. [${result.title}](${result.url})`;
+        if (result.description) {
+          resultsMessage += ` - ${result.description}`;
+        }
+        resultsMessage += '\n';
       }
+
+      await message.channel.send(resultsMessage);
     } else {
       await searchMessage.edit('🔍 No results found for that query.');
     }
