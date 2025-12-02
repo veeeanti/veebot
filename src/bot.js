@@ -134,7 +134,7 @@ async function handleSearchCommand(message, args) {
         ],
         timestamp: new Date(),
         footer: {
-          text: 'Powered by Discord Search Bot',
+          text: 'Powered by veeanti, next time just use google.',
         }
       };
 
