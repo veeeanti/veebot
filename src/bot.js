@@ -222,20 +222,30 @@ async function handleSearchCommand(message, args) {
   const searchMessage = await message.reply(`🔍 Searching for: **${query}**...`);
 
   try {
-    // Use a more reliable search approach
-    const searchResults = await performWebSearch(query);
+    // Use combined search approach
+    const searchResults = await performCombinedSearch(query);
 
     if (searchResults && searchResults.length > 0) {
       await searchMessage.edit(`🔍 Found ${searchResults.length} result(s) for: **${query}**`);
 
-      // Send results as clickable links
+      // Send results as clickable links with special formatting for UnionCrax
       let resultsMessage = '**Search Results:**\n';
       for (const [index, result] of searchResults.entries()) {
-        resultsMessage += `${index + 1}. [${result.title}](${result.url})`;
-        if (result.description) {
-          resultsMessage += ` - ${result.description}`;
+        if (result.source === 'UnionCrax') {
+          // Special formatting for UnionCrax games
+          resultsMessage += `🎮 **${index + 1}. [${result.title}](${result.url})**\n`;
+          resultsMessage += `   📥 ${result.downloadCount} downloads | 💾 ${result.size}\n`;
+          if (result.description) {
+            resultsMessage += `   *${result.description}*\n`;
+          }
+        } else {
+          // Regular web search results
+          resultsMessage += `${index + 1}. [${result.title}](${result.url})`;
+          if (result.description) {
+            resultsMessage += ` - ${result.description}`;
+          }
+          resultsMessage += '\n';
         }
-        resultsMessage += '\n';
       }
 
       await message.channel.send(resultsMessage);
@@ -245,6 +255,98 @@ async function handleSearchCommand(message, args) {
   } catch (error) {
     logger.error(`Search error: ${error.message}`);
     await searchMessage.edit('❌ An error occurred during the search. Please try again.');
+  }
+}
+
+// UnionCrax API configuration
+const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
+
+// Helper function to normalize strings for comparison
+function normalizeString(str) {
+  if (!str) return '';
+  return String(str)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/g, "")
+    .trim();
+}
+
+// Function to search UnionCrax games
+async function searchUnionCraxGames(query) {
+  try {
+    const normalizedQuery = normalizeString(query);
+
+    // Fetch games and stats from UnionCrax API
+    const [games, gameStats] = await Promise.all([
+      axios.get(`${UNION_CRAX_API_BASE}/api/games`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      }),
+      axios.get(`${UNION_CRAX_API_BASE}/api/downloads/all`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      })
+    ]);
+
+    const gamesData = games.data || [];
+    const statsData = gameStats.data || {};
+
+    if (!Array.isArray(gamesData) || gamesData.length === 0) {
+      return [];
+    }
+
+    // Score games based on query relevance
+    const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+
+    const scoredGames = gamesData.map(game => {
+      const normalizedName = normalizeString(game.name || '');
+      const normalizedDesc = normalizeString(game.description || '');
+      let score = 0;
+
+      // Exact match
+      if (normalizedName === normalizedQuery) score += 100;
+      if (normalizedName.includes(normalizedQuery) && Math.abs(normalizedName.length - normalizedQuery.length) < 10) score += 60;
+      if (normalizedQuery.includes(normalizedName) && normalizedName.length > 4) score += 40;
+
+      // Word matching
+      queryWords.forEach(word => {
+        if (word.length > 3) {
+          if (normalizedName.includes(word)) score += 25;
+          else if (normalizedDesc.includes(word)) score += 8;
+        }
+      });
+
+      if (normalizedName.startsWith(normalizedQuery)) score += 30;
+
+      // App ID match
+      if ((game.appid && String(game.appid) === normalizedQuery) || (String(game.appid) === normalizedQuery)) score += 20;
+
+      return { game, score };
+    }).sort((a, b) => b.score - a.score);
+
+    // Filter high-scoring games
+    const filtered = scoredGames.filter(item => item.score >= 60);
+
+    // Format results for display
+    return filtered.slice(0, 3).map(item => {
+      const game = item.game;
+      const stats = statsData[game.appid] || statsData[game.id] || {};
+
+      return {
+        title: `${game.name} - Free Download on UnionCrax`,
+        url: `${UNION_CRAX_API_BASE}/game/${encodeURIComponent(game.appid || game.id || '')}`,
+        description: game.description || 'No description available',
+        source: 'UnionCrax',
+        downloadCount: stats.downloads || stats.download_count || stats.count || 0,
+        size: game.size || 'Unknown'
+      };
+    });
+  } catch (error) {
+    logger.error(`UnionCrax search failed: ${error.message}`);
+    return [];
   }
 }
 
@@ -273,7 +375,8 @@ async function performWebSearch(query) {
         results.push({
           title: titleElement.text().trim(),
           url: urlElement.attr('href'),
-          description: descriptionElement.text().trim() || 'No description available'
+          description: descriptionElement.text().trim() || 'No description available',
+          source: 'Web Search'
         });
       }
     });
@@ -283,7 +386,8 @@ async function performWebSearch(query) {
       results.push({
         title: `Search results for "${query}"`,
         url: searchUrl,
-        description: `Find information about ${query} on the web`
+        description: `Find information about ${query} on the web`,
+        source: 'Web Search'
       });
     }
 
@@ -295,8 +399,30 @@ async function performWebSearch(query) {
     return [{
       title: `Search results for "${query}"`,
       url: `${config.searchEngine}${encodeURIComponent(query)}`,
-      description: `Could not fetch live results. Click to search for ${query}`
+      description: `Could not fetch live results. Click to search for ${query}`,
+      source: 'Web Search'
     }];
+  }
+}
+
+// Combined search function
+async function performCombinedSearch(query) {
+  try {
+    // Perform both searches in parallel
+    const [webResults, unionCraxResults] = await Promise.all([
+      performWebSearch(query),
+      searchUnionCraxGames(query)
+    ]);
+
+    // Combine results, prioritizing UnionCrax games
+    const combinedResults = [...unionCraxResults, ...webResults];
+
+    // Limit to top 5 results total
+    return combinedResults.slice(0, 5);
+  } catch (error) {
+    logger.error(`Combined search failed: ${error.message}`);
+    // Fallback to web search only
+    return performWebSearch(query);
   }
 }
 
