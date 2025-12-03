@@ -222,25 +222,24 @@ async function handleSearchCommand(message, args) {
     const searchResults = await performCombinedSearch(query);
 
     if (searchResults && searchResults.length > 0) {
-      await searchMessage.edit(`🔍 Found ${searchResults.length} result(s) for: **${query}**`);
+      await searchMessage.edit(`🔍 Found top result for: **${query}**`);
 
-      // Send results as clickable links with special formatting for UnionCrax
-      let resultsMessage = '**Search Results:**\n';
-      for (const [index, result] of searchResults.entries()) {
-        if (result.source === 'UnionCrax') {
-          // Special formatting for UnionCrax games
-          resultsMessage += `🎮 **${index + 1}. [${result.title}](${result.url})**\n`;
-          resultsMessage += `   📥 ${result.downloadCount} downloads | 💾 ${result.size}\n`;
-          if (result.description) {
-            resultsMessage += `   *${result.description}*\n`;
-          }
-        } else {
-          // Regular web search results
-          resultsMessage += `${index + 1}. [${result.title}](${result.url})`;
-          if (result.description) {
-            resultsMessage += ` - ${result.description}`;
-          }
-          resultsMessage += '\n';
+      // Send the single top result with special formatting for UnionCrax
+      const result = searchResults[0];
+      let resultsMessage = '**Top Search Result:**\n';
+
+      if (result.source === 'UnionCrax') {
+        // Special formatting for UnionCrax games
+        resultsMessage += `🎮 **[${result.title}](${result.url})**\n`;
+        resultsMessage += `📥 ${result.downloadCount} downloads | 💾 ${result.size}\n`;
+        if (result.description) {
+          resultsMessage += `*${result.description}*\n`;
+        }
+      } else {
+        // Regular web search results
+        resultsMessage += `[${result.title}](${result.url})`;
+        if (result.description) {
+          resultsMessage += ` - ${result.description}`;
         }
       }
 
@@ -413,12 +412,13 @@ async function performCombinedSearch(query) {
     // Combine results, prioritizing UnionCrax games
     const combinedResults = [...unionCraxResults, ...webResults];
 
-    // Limit to top 5 results total
-    return combinedResults.slice(0, 5);
+    // Return only the top result
+    return combinedResults.slice(0, 1);
   } catch (error) {
     logger.error(`Combined search failed: ${error.message}`);
-    // Fallback to web search only
-    return performWebSearch(query);
+    // Fallback to web search only, but still return only top result
+    const webResults = await performWebSearch(query);
+    return webResults.slice(0, 1);
   }
 }
 
