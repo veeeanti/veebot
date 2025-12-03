@@ -147,6 +147,9 @@ client.on('messageCreate', async (message) => {
         case 'info':
           await handleInfoCommand(message);
           break;
+        case 'location':
+          await handleLocationCommand(message);
+          break;
         default:
           message.reply(`Unknown command. Type ${config.prefix}help for available commands.`);
       }
@@ -430,6 +433,7 @@ async function handleHelpCommand(message, args) {
   helpMessage += `**${config.prefix}search [query]** - Search the web\n`;
   helpMessage += `**${config.prefix}help** - Show this help message\n`;
   helpMessage += `**${config.prefix}info** - Show bot information\n`;
+  helpMessage += `**${config.prefix}location** - Show where the bot is running from\n`;
 
   message.channel.send(helpMessage);
 }
@@ -449,6 +453,40 @@ async function handleInfoCommand(message) {
       );
 
   message.channel.send({ embeds: [embed] });
+}
+
+async function handleLocationCommand(message) {
+  try {
+    const locationInfo = {
+      workingDirectory: process.cwd(),
+      platform: process.platform,
+      architecture: process.arch,
+      nodeVersion: process.version,
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'production'
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('📍 Bot Location Information')
+      .setColor(0x0099ff)
+      .addFields(
+        { name: 'Working Directory', value: `\`${locationInfo.workingDirectory}\``, inline: false },
+        { name: 'Platform', value: locationInfo.platform, inline: true },
+        { name: 'Architecture', value: locationInfo.architecture, inline: true },
+        { name: 'Node.js Version', value: locationInfo.nodeVersion, inline: true },
+        { name: 'Environment', value: locationInfo.environment, inline: true },
+        { name: 'Uptime', value: `${Math.floor(locationInfo.uptime / 60)} minutes`, inline: true },
+        { name: 'Memory Usage', value: `${Math.round(locationInfo.memoryUsage.heapUsed / 1024 / 1024)} MB`, inline: true }
+      )
+      .setTimestamp()
+      .setFooter({ text: 'Bot location details' });
+
+    message.channel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Location command error: ${error.message}`);
+    message.reply('❌ An error occurred while getting location information.');
+  }
 }
 
 
