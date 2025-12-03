@@ -34,7 +34,6 @@ const config = {
   prefix: process.env.BOT_PREFIX || '!',
   searchEngine: process.env.SEARCH_ENGINE || 'https://www.google.com/search?q=',
   helpKeywords: {
-    'help': 'Provides information about available commands',
     'search': 'Searches the web for information',
     'info': 'Provides bot information'
   },
@@ -141,9 +140,6 @@ client.on('messageCreate', async (message) => {
         case 'search':
           await handleSearchCommand(message, args);
           break;
-        case 'help':
-          await handleHelpCommand(message, args);
-          break;
         case 'info':
           await handleInfoCommand(message);
           break;
@@ -151,7 +147,7 @@ client.on('messageCreate', async (message) => {
           await handleLocationCommand(message);
           break;
         default:
-          message.reply(`Unknown command. Type ${config.prefix}help for available commands.`);
+          message.reply(`Unknown command. Available commands: search, info, location`);
       }
     } catch (error) {
       logger.error(`Error handling command: ${error.message}`);
@@ -426,17 +422,6 @@ async function performCombinedSearch(query) {
   }
 }
 
-async function handleHelpCommand(message, args) {
-  let helpMessage = '**Available Commands:**\n\n';
-
-  // Add command help
-  helpMessage += `**${config.prefix}search [query]** - Search the web\n`;
-  helpMessage += `**${config.prefix}help** - Show this help message\n`;
-  helpMessage += `**${config.prefix}info** - Show bot information\n`;
-  helpMessage += `**${config.prefix}location** - Show where the bot is running from\n`;
-
-  message.channel.send(helpMessage);
-}
 
 async function handleInfoCommand(message) {
   const uptime = Date.now() - START_TIME;
