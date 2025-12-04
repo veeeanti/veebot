@@ -215,37 +215,32 @@ async function handleSearchCommand(message, args) {
   }
 
   const query = args.join(' ');
-  const searchMessage = await message.reply(`🔍 Searching for: **${query}**...`);
+  const searchMessage = await message.reply(`🔍 Searching Google for games matching UnionCrax listings: **${query}**...`);
 
   try {
-    // Use combined search approach
-    const searchResults = await performCombinedSearch(query);
+    // Search Google for games that match UnionCrax listings
+    const searchResult = await searchGoogleForUnionCraxGames(query);
 
-    if (searchResults && searchResults.length > 0) {
+    if (searchResult) {
       await searchMessage.edit(`🔍 Found top result for: **${query}**`);
 
-      // Send the single top result with special formatting for UnionCrax
-      const result = searchResults[0];
-      let resultsMessage = '**Top Search Result:**\n';
+      // Create and send embed with the search result
+      const embed = new EmbedBuilder()
+        .setTitle(`🎮 ${searchResult.title}`)
+        .setURL(searchResult.url)
+        .setColor(0x0099ff)
+        .setDescription(searchResult.description || 'No description available')
+        .addFields(
+          { name: 'Source', value: searchResult.source, inline: true },
+          { name: 'Downloads', value: searchResult.downloadCount ? String(searchResult.downloadCount) : 'N/A', inline: true },
+          { name: 'Size', value: searchResult.size || 'N/A', inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Game search result from UnionCrax' });
 
-      if (result.source === 'UnionCrax') {
-        // Special formatting for UnionCrax games
-        resultsMessage += `🎮 **[${result.title}](${result.url})**\n`;
-        resultsMessage += `📥 ${result.downloadCount} downloads | 💾 ${result.size}\n`;
-        if (result.description) {
-          resultsMessage += `*${result.description}*\n`;
-        }
-      } else {
-        // Regular web search results
-        resultsMessage += `[${result.title}](${result.url})`;
-        if (result.description) {
-          resultsMessage += ` - ${result.description}`;
-        }
-      }
-
-      await message.channel.send(resultsMessage);
+      await message.channel.send({ embeds: [embed] });
     } else {
-      await searchMessage.edit('🔍 No results found for that query.');
+      await searchMessage.edit('🔍 No matching games found on UnionCrax for that query.');
     }
   } catch (error) {
     logger.error(`Search error: ${error.message}`);
@@ -255,6 +250,43 @@ async function handleSearchCommand(message, args) {
 
 // UnionCrax API configuration
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
+
+// Function to search Google for games that match UnionCrax listings
+async function searchGoogleForUnionCraxGames(query) {
+  try {
+    // First, search UnionCrax for games matching the query
+    const unionCraxGames = await searchUnionCraxGames(query);
+
+    if (unionCraxGames.length === 0) {
+      return null; // No matching games found on UnionCrax
+    }
+
+    // Get the top matching game from UnionCrax
+    const topUnionCraxGame = unionCraxGames[0];
+
+    // Now search Google for this specific game to get the best web result
+    const googleQuery = `${topUnionCraxGame.title} site:union-crax.xyz`;
+    const googleResults = await performWebSearch(googleQuery);
+
+    if (googleResults.length > 0) {
+      // Combine UnionCrax data with Google search result
+      return {
+        title: topUnionCraxGame.title,
+        url: googleResults[0].url,
+        description: topUnionCraxGame.description,
+        source: 'UnionCrax via Google',
+        downloadCount: topUnionCraxGame.downloadCount,
+        size: topUnionCraxGame.size
+      };
+    }
+
+    // If no Google results, return the UnionCrax data directly
+    return topUnionCraxGame;
+  } catch (error) {
+    logger.error(`Google search for UnionCrax games failed: ${error.message}`);
+    return null;
+  }
+}
 
 // Helper function to normalize strings for comparison
 function normalizeString(str) {
