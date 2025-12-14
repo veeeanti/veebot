@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder } from 'discord.js';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 import winston from 'winston';
 
 // Import helper modules
@@ -523,7 +523,7 @@ async function performWebSearch(query) {
       }
     });
 
-    const $ = cheerio.load(response.data);
+    const $ = load(response.data);
     const results = [];
 
     // Extract search results from Google search page
