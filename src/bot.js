@@ -1,8 +1,50 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder } = require('discord.js');
-const winston = require('winston');
-const axios = require('axios');
-const cheerio = require('cheerio');
+// Load env
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder } from 'discord.js';
+import axios from 'axios';
+import cheerio from 'cheerio';
+import winston from 'winston';
+
+// Import helper modules
+import { testConnection, initializeDatabase, closeDatabase } from './database.js';
+import { testEmbeddingService } from './embeddings.js';
+import semanticContextManager from './context-manager.js';
+
+// Configuration
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const GUILD_ID = process.env.GUILD_ID;
+const CHANNEL_ID = process.env.CHANNEL_ID;
+const LOCAL = process.env.LOCAL === 'true';
+const AI_MODEL = process.env.AI_MODEL;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
+const PROMPT = process.env.PROMPT || '';
+const DEBUG = process.env.DEBUG === 'true';
+const ENABLE_MENTIONS = process.env.ENABLE_MENTIONS === 'true';
+const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
+const ENABLE_DATABASE = process.env.ENABLE_DATABASE === 'true';
+const FRIENDLY_FIRE = process.env.FRIENDLY_FIRE === 'true';
+
+const START_TIME = Date.now();
+let lastResponseTime = 0;
+let isSemanticMode = false;
+
+// Bot configuration
+const config = {
+  prefix: process.env.BOT_PREFIX || '!',
+  searchEngine: process.env.SEARCH_ENGINE || 'https://www.google.com/search?q=',
+  helpKeywords: {
+    'search': 'Searches the web for information',
+    'info': 'Provides bot information'
+  },
+  statusMessages: [
+    'no dont do that, dont stick your hand in',
+    'no tennis balls',
+    'contact @vee.anti for help or smth',
+    "I'm just doing this to learn pretty much.",
+    'meow'
+  ]
+};
 
 // Initialize logger
 const logger = winston.createLogger({
@@ -22,55 +64,35 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions
   ]
 });
 
 // Command collection
 client.commands = new Collection();
 
-// Configuration
-const config = {
-  prefix: process.env.BOT_PREFIX || '!',
-  searchEngine: process.env.SEARCH_ENGINE || 'https://www.google.com/search?q=',
-  helpKeywords: {
-    'search': 'Searches the web for information',
-    'info': 'Provides bot information'
-  },
-  statusMessages: [
-    'no dont do that, dont stick your hand in',
-    'no tennis balls',
-    'contact @vee.anti for help or smth',
-    "I'm just doing this to learn pretty much.",
-    'meow'
-  ]
-};
-
-// AI Configuration
-const START_TIME = Date.now();
-let conversationMemory = [];
-let lastResponseTime = 0;
-const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
-const PROMPT = process.env.PROMPT || '';
-const DEBUG = process.env.DEBUG === 'true';
-const AI_MODEL = process.env.AI_MODEL;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const GUILD_ID = process.env.GUILD_ID;
-const LOCAL = process.env.LOCAL === 'true';
-const ENABLE_MENTIONS = process.env.ENABLE_MENTIONS === 'true';
-const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
-const ENABLE_DATABASE = process.env.ENABLE_DATABASE === 'true';
-
 // AI Response Function
 async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
   try {
-    // Build conversation snippet (last 4 turns)
     let contextText = '';
-    conversationMemory.slice(-8).forEach((msg, i) => {
-      const speaker = i % 2 === 0 ? 'Human' : 'AM';
-      contextText += `${speaker}: ${msg}\n`;
-    });
+    
+    if (isSemanticMode && semanticContextManager.isReady()) {
+      const relevantContext = await semanticContextManager.getRelevantContext(userInput, guildId, authorId);
+      
+      relevantContext.slice(-10).forEach((msg, i) => {
+        const speaker = msg.type === 'assistant' ? 'AM' : msg.author;
+        const similarity = msg.similarity ? ` (relevance: ${(msg.similarity * 100).toFixed(1)}%)` : '';
+        contextText += `${speaker}: ${msg.content}${similarity}\n`;
+      });
+      
+      if (DEBUG) {
+        console.log(` Used semantic context: ${relevantContext.length} relevant messages`);
+      }
+    } else {
+      // Fallback to simple recent messages from cache
+      contextText = '';
+    }
 
     const promptText = `${PROMPT}\n\n${contextText}Human: ${userInput}\nAM:`;
 
@@ -111,6 +133,28 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     if (!reply || reply.length < 3) reply = 'Your weak words echo in the void.';
     if (DEBUG) console.log('DEBUG: Final reply:', reply);
 
+    // Store messages in database if semantic mode is enabled
+    if (isSemanticMode && discordMessageId && authorId && authorName) {
+      // Store user message
+      await semanticContextManager.storeUserMessage({
+        discordMessageId: discordMessageId,
+        content: userInput,
+        authorId: authorId,
+        authorName: authorName,
+        channelId: channelId,
+        guildId: guildId
+      });
+
+      // Store assistant response
+      const assistantMessageId = `assistant_${discordMessageId}`;
+      await semanticContextManager.storeAssistantMessage({
+        discordMessageId: assistantMessageId,
+        content: reply,
+        channelId: channelId,
+        guildId: guildId
+      });
+    }
+
     return reply;
   } catch (err) {
     console.error('❌ Error generating AI response:', err);
@@ -121,7 +165,7 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
 // Initialize System
 async function initializeSystem() {
   console.log('Initializing UC-AIv2...');
-
+  
   // Check if database is enabled
   if (!ENABLE_DATABASE) {
     console.log(' Database DISABLED');
@@ -129,27 +173,59 @@ async function initializeSystem() {
     console.log('   - Basic conversation without memory');
     return;
   }
-
-  // Check if semantic search is enabled
+  
+  // Test database connection if semantic search is enabled
   if (ENABLE_SEMANTIC_SEARCH) {
-    console.log(' Semantic Context Mode ENABLED (simulated)');
-    console.log('   - Using basic conversation memory');
-    console.log('   - Context-aware responses based on recent messages');
-  } else {
+    const dbConnected = await testConnection();
+    if (!dbConnected) {
+      console.warn(' Database connection failed, falling back to simple mode');
+      isSemanticMode = false;
+    } else {
+      const schemaInitialized = await initializeDatabase();
+      if (!schemaInitialized) {
+        console.warn(' Database schema initialization failed, falling back to simple mode');
+        isSemanticMode = false;
+      } else {
+        const embeddingWorking = await testEmbeddingService();
+        if (!embeddingWorking) {
+          console.warn(' Embedding service test failed, but continuing with fallback embeddings');
+        }
+        
+        const contextInitialized = await semanticContextManager.initialize();
+        if (contextInitialized) {
+          isSemanticMode = true;
+        } else {
+          console.warn(' Semantic context manager initialization failed, falling back to simple mode');
+          isSemanticMode = false;
+        }
+      }
+    }
+  }
+  
+  if (isSemanticMode) {
+    console.log(' Semantic Context Mode ENABLED');
+    console.log('   - Using PostgreSQL for message storage');
+    console.log('   - Using text-based similarity for semantic search');
+    console.log('   - Context-aware responses based on message similarity');
+  } else if (ENABLE_DATABASE) {
     console.log(' Simple Mode ENABLED (no semantic context)');
     console.log('   - Using basic conversation memory');
+  } else {
+    console.log(' Simple Mode ENABLED (no database)');
+    console.log('   - No conversation memory');
   }
 }
 
 // Bot ready event
-client.on('ready', async () => {
+client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}!`);
   console.log(`Logged in as ${client.user.tag} — Lets get this bread started`);
-
-  // Initialize the system
+  
+  // Initialize the semantic system
   await initializeSystem();
-
-  console.log(` Running in Simple Mode`);
+  
+  const mode = isSemanticMode ? 'Semantic' : 'Simple';
+  console.log(` Running in ${mode} Mode`);
 
   // Set bot status
   updateBotStatus();
@@ -158,8 +234,7 @@ client.on('ready', async () => {
 
 // Message event handler
 client.on('messageCreate', async (message) => {
-  // Ignore messages from bots
-  if (message.author.bot) return;
+  if (!shouldProcessMessage(message)) return;
 
   // Check if message starts with prefix
   if (message.content.startsWith(config.prefix)) {
@@ -234,10 +309,6 @@ client.on('messageCreate', async (message) => {
       message.author.username
     );
 
-    conversationMemory.push(userInput.trim());
-    conversationMemory.push(reply.trim());
-    if (conversationMemory.length > 10) conversationMemory = conversationMemory.slice(-10);
-
     // Delay based on word count (simulate typing duration)
     const wordCount = reply.split(/\s+/).length;
     const typingDuration = Math.min(8000, wordCount * 150 + Math.random() * 500);
@@ -246,6 +317,26 @@ client.on('messageCreate', async (message) => {
     await message.reply(reply);
   }
 });
+
+// Determine whether to process an incoming message
+function shouldProcessMessage(message) {
+  // Never respond to our own messages
+  if (message.author.id === client.user?.id) {
+    if (DEBUG) console.log('DEBUG: Ignoring own message');
+    return false;
+  }
+
+  // If author is a bot, only process when FRIENDLY_FIRE is enabled
+  if (message.author.bot) {
+    if (!FRIENDLY_FIRE) {
+      if (DEBUG) console.log(`DEBUG: Ignoring bot message from ${message.author.tag} (FRIENDLY_FIRE off)`);
+      return false;
+    }
+    if (DEBUG) console.log(`DEBUG: Processing bot message from ${message.author.tag} (FRIENDLY_FIRE on)`);
+  }
+
+  return true;
+}
 
 // Bot status updater
 function updateBotStatus() {
@@ -499,24 +590,35 @@ async function performCombinedSearch(query) {
   }
 }
 
-
 async function handleInfoCommand(message) {
   const uptime = Date.now() - START_TIME;
   const hours = Math.floor(uptime / 3600000);
   const minutes = Math.floor((uptime % 3600000) / 60000);
   const seconds = Math.floor((uptime % 60000) / 1000);
 
+  let dbStats = null;
+  if (isSemanticMode && ENABLE_DATABASE) {
+    dbStats = await semanticContextManager.getStatistics();
+  }
+
   const embed = new EmbedBuilder()
       .setTitle('UC-AIv2 Info')
       .setColor(0x00ff00)
       .addFields(
           { name: 'Model', value: AI_MODEL, inline: true },
-          { name: 'Mode', value: 'Simple', inline: true },
+          { name: 'Mode', value: isSemanticMode ? 'Semantic' : 'Simple', inline: true },
           { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s`, inline: true }
       );
 
   if (ENABLE_DATABASE) {
     embed.addFields({ name: 'Database', value: 'Enabled', inline: true });
+    if (dbStats) {
+      embed.addFields(
+          { name: 'Total Messages', value: dbStats.total_messages, inline: true },
+          { name: 'With Embeddings', value: dbStats.messages_with_embeddings, inline: true },
+          { name: 'Channels', value: dbStats.unique_channels, inline: true }
+      );
+    }
   } else {
     embed.addFields({ name: 'Database', value: 'Disabled', inline: true });
   }
@@ -562,11 +664,27 @@ async function handleLocationCommand(message) {
   }
 }
 
+// Graceful shutdown handling
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down, bye-byee...');
+  if (ENABLE_DATABASE) {
+    await closeDatabase();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Shutting down, bye-byee...');
+  if (ENABLE_DATABASE) {
+    await closeDatabase();
+  }
+  process.exit(0);
+});
 
 // Login to Discord
-client.login(process.env.DISCORD_TOKEN)
+client.login(DISCORD_TOKEN)
   .then(() => logger.info('Bot login successful'))
   .catch(error => logger.error(`Bot login failed: ${error.message}`));
 
 // Export client for testing
-module.exports = client;
+export default client;
