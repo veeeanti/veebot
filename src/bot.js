@@ -56,14 +56,18 @@ const DEBUG = process.env.DEBUG === 'true';
 const AI_MODEL = process.env.AI_MODEL;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const LOCAL = process.env.LOCAL === 'true';
+const ENABLE_MENTIONS = process.env.ENABLE_MENTIONS === 'true';
+const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
+const ENABLE_DATABASE = process.env.ENABLE_DATABASE === 'true';
 
 // AI Response Function
-async function generateAMResponse(userInput, context) {
+async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
   try {
     // Build conversation snippet (last 4 turns)
     let contextText = '';
-    context.slice(-8).forEach((msg, i) => {
+    conversationMemory.slice(-8).forEach((msg, i) => {
       const speaker = i % 2 === 0 ? 'Human' : 'AM';
       contextText += `${speaker}: ${msg}\n`;
     });
@@ -114,10 +118,38 @@ async function generateAMResponse(userInput, context) {
   }
 }
 
+// Initialize System
+async function initializeSystem() {
+  console.log('Initializing UC-AIv2...');
+
+  // Check if database is enabled
+  if (!ENABLE_DATABASE) {
+    console.log(' Database DISABLED');
+    console.log('   - Running in Simple Mode (no database)');
+    console.log('   - Basic conversation without memory');
+    return;
+  }
+
+  // Check if semantic search is enabled
+  if (ENABLE_SEMANTIC_SEARCH) {
+    console.log(' Semantic Context Mode ENABLED (simulated)');
+    console.log('   - Using basic conversation memory');
+    console.log('   - Context-aware responses based on recent messages');
+  } else {
+    console.log(' Simple Mode ENABLED (no semantic context)');
+    console.log('   - Using basic conversation memory');
+  }
+}
+
 // Bot ready event
-client.on('ready', () => {
+client.on('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}!`);
-  console.log(`Bot is ready! Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${client.user.tag} — Lets get this bread started`);
+
+  // Initialize the system
+  await initializeSystem();
+
+  console.log(` Running in Simple Mode`);
 
   // Set bot status
   updateBotStatus();
@@ -156,49 +188,62 @@ client.on('messageCreate', async (message) => {
   }
 
   // AI Response Handling
-  if (message.channel.id === CHANNEL_ID) {
-    const currentTime = Date.now();
-    let shouldRespond = false;
+  const isCorrectChannel = message.channel.id === CHANNEL_ID;
+  const isMentioned = message.mentions.has(client.user);
+  const isInMainGuild = message.guild && message.guild.id === GUILD_ID;
 
-    if (message.mentions.has(client.user)) {
+  const currentTime = Date.now();
+  let shouldRespond = false;
+
+  if (ENABLE_MENTIONS && isMentioned && isInMainGuild) {
+    shouldRespond = true;
+  } else if (isCorrectChannel) {
+    if (isMentioned) {
       shouldRespond = true;
     } else if (Math.random() < RANDOM_RESPONSE_CHANCE && currentTime - lastResponseTime > 10000) {
       shouldRespond = true;
       lastResponseTime = currentTime;
     }
+  }
 
-    if (shouldRespond) {
-      let userInput = message.content;
+  if (shouldRespond) {
+    let userInput = message.content;
 
-      // Include replied message context
-      if (message.reference) {
-        try {
-          const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
-          userInput = `(In response to '${repliedTo.content}') ${userInput}`;
-        } catch (err) {
-          if (DEBUG) console.log(`DEBUG: Could not fetch replied message: ${err}`);
-        }
+    // Include replied message context
+    if (message.reference) {
+      try {
+        const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+        userInput = `(In response to '${repliedTo.content}') ${userInput}`;
+      } catch (err) {
+        if (DEBUG) console.log(`DEBUG: Could not fetch replied message: ${err}`);
       }
-
-      // Delay before typing starts (simulate thinking)
-      const preTypingDelay = Math.floor(Math.random() * 2000) + 1000; // 1–3 seconds
-      await new Promise(res => setTimeout(res, preTypingDelay));
-
-      await message.channel.sendTyping();
-
-      const reply = await generateAMResponse(userInput, conversationMemory);
-
-      conversationMemory.push(userInput.trim());
-      conversationMemory.push(reply.trim());
-      if (conversationMemory.length > 10) conversationMemory = conversationMemory.slice(-10);
-
-      // Delay based on word count (simulate typing duration)
-      const wordCount = reply.split(/\s+/).length;
-      const typingDuration = Math.min(8000, wordCount * 150 + Math.random() * 500);
-      await new Promise(res => setTimeout(res, typingDuration));
-
-      await message.reply(reply);
     }
+
+    // Delay before typing starts (simulate thinking)
+    const preTypingDelay = Math.floor(Math.random() * 2000) + 1000; // 1–3 seconds
+    await new Promise(res => setTimeout(res, preTypingDelay));
+
+    await message.channel.sendTyping();
+
+    const reply = await generateAMResponse(
+      userInput,
+      message.channel.id,
+      message.guild?.id,
+      message.id,
+      message.author.id,
+      message.author.username
+    );
+
+    conversationMemory.push(userInput.trim());
+    conversationMemory.push(reply.trim());
+    if (conversationMemory.length > 10) conversationMemory = conversationMemory.slice(-10);
+
+    // Delay based on word count (simulate typing duration)
+    const wordCount = reply.split(/\s+/).length;
+    const typingDuration = Math.min(8000, wordCount * 150 + Math.random() * 500);
+    await new Promise(res => setTimeout(res, typingDuration));
+
+    await message.reply(reply);
   }
 });
 
@@ -272,7 +317,7 @@ async function searchGoogleForUnionCraxGames(query) {
       // Combine UnionCrax data with Google search result
       return {
         title: topUnionCraxGame.title,
-        url: googleResults[0].url,
+        url: topUnionCraxGame.url,
         description: topUnionCraxGame.description,
         source: 'UnionCrax via Google',
         downloadCount: topUnionCraxGame.downloadCount,
@@ -466,8 +511,19 @@ async function handleInfoCommand(message) {
       .setColor(0x00ff00)
       .addFields(
           { name: 'Model', value: AI_MODEL, inline: true },
-          { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s` }
+          { name: 'Mode', value: 'Simple', inline: true },
+          { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s`, inline: true }
       );
+
+  if (ENABLE_DATABASE) {
+    embed.addFields({ name: 'Database', value: 'Enabled', inline: true });
+  } else {
+    embed.addFields({ name: 'Database', value: 'Disabled', inline: true });
+  }
+
+  embed.addFields(
+    { name: 'Mentions Enabled', value: ENABLE_MENTIONS ? 'Yes' : 'No', inline: true }
+  );
 
   message.channel.send({ embeds: [embed] });
 }
