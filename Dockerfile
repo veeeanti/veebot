@@ -15,4 +15,4 @@ COPY . .
 
 
 # Start the bot
-CMD ["node", "/app/index.js"]
+CMD ["node", "/app/bot.js"]
