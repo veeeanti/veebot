@@ -2,13 +2,13 @@
   "name": "discord-search-bot",
   "version": "1.0.0",
   "description": "A Discord bot that can search online, provide keyword-based help, and more",
-  "main": "src/bot.js",
+  "main": "bot.js",
   "type": "module",
   "scripts": {
-    "start": "node src/bot.js",
-    "dev": "nodemon src/bot.js",
+    "start": "node bot.js",
+    "dev": "nodemon bot.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "setup-db": "node src/setup-db.js"
+    "setup-db": "node setup-db.js"
   },
   "keywords": [
     "discord",
