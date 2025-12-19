@@ -23,6 +23,7 @@ const DEBUG = process.env.DEBUG === 'true';
 const ENABLE_MENTIONS = process.env.ENABLE_MENTIONS === 'true';
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
 const ENABLE_DATABASE = process.env.ENABLE_DATABASE === 'true';
+const DATABASE_URL = process.env.DATABASE_URL;
 const FRIENDLY_FIRE = process.env.FRIENDLY_FIRE === 'true';
 
 const START_TIME = Date.now();
