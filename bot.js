@@ -568,11 +568,63 @@ async function searchUnionCraxGames(query) {
 // Function to search CS.RIN.RU forum for threads matching the query
 async function searchCsRinForum(query) {
   try {
-    // CS.RIN.RU requires authentication for their search endpoint
-    // Use DuckDuckGo with site: filter as a workaround
+    const cookieHeader = process.env.CS_RIN_COOKIE;
+    const normalizedQuery = normalizeString(query);
+
+    // Attempt authenticated forum search using cookie from environment
+    if (cookieHeader) {
+      const searchUrl = `${CS_RIN_FORUM_BASE}/search.php?keywords=${encodeURIComponent(query)}&terms=all&author=&sc=1&sf=titleonly&sr=topics&sk=t&sd=d&st=0&ch=400&t=0&submit=Search`;
+
+      const response = await axios.get(searchUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Cookie': cookieHeader
+        },
+        timeout: 15000
+      });
+
+      const $ = load(response.data);
+      const results = [];
+
+      // Parse search results from CS.RIN.RU forum page (phpBB)
+      $('a.topictitle, .titles:not(:first-child) a, dt a').each((i, element) => {
+        if (results.length >= 5) return;
+
+        const $link = $(element);
+        const title = $link.text().trim();
+        let url = $link.attr('href');
+
+        if (!title || title.length < 3 || !url) return;
+
+        if (!url.startsWith('http')) {
+          url = `${CS_RIN_FORUM_BASE}/${url.replace(/^\.\//, '')}`;
+        }
+
+        const normalizedTitle = normalizeString(title);
+        const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+        const matches = normalizedTitle.includes(normalizedQuery) || queryWords.some(word => normalizedTitle.includes(word));
+
+        if (matches) {
+          results.push({
+            title: title,
+            url: url,
+            description: 'Forum thread on CS.RIN.RU',
+            source: 'CS.RIN.RU Forum'
+          });
+        }
+      });
+
+      if (results.length > 0) {
+        return results;
+      }
+    }
+
+    // Fallback: DuckDuckGo with site: filter if no cookie or no results
     const ddgQuery = `${query} site:cs.rin.ru/forum`;
     const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(ddgQuery)}`;
-    
+
     const response = await axios.get(searchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
