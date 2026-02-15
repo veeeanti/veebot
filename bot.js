@@ -569,9 +569,9 @@ async function searchUnionCraxGames(query) {
 async function searchCsRinForum(query) {
   try {
     // CS.RIN.RU requires authentication for their search endpoint
-    // Use Google search with site: filter as a workaround
-    const googleQuery = `${query} site:cs.rin.ru/forum`;
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(googleQuery)}`;
+    // Use DuckDuckGo with site: filter as a workaround
+    const ddgQuery = `${query} site:cs.rin.ru/forum`;
+    const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(ddgQuery)}`;
     
     const response = await axios.get(searchUrl, {
       headers: {
@@ -585,28 +585,32 @@ async function searchCsRinForum(query) {
     const $ = load(response.data);
     const results = [];
 
-    // Parse Google search results for CS.RIN.RU links
-    $('div.g').each((i, element) => {
+    // Parse DuckDuckGo HTML results for CS.RIN.RU links
+    $('a.result__a').each((i, element) => {
       if (results.length >= 5) return; // Limit to top 5 results
 
-      const titleElement = $(element).find('h3');
-      const urlElement = $(element).find('a');
-      const descriptionElement = $(element).find('div.VwiC3b');
+      const $link = $(element);
+      const title = $link.text().trim();
+      let url = $link.attr('href');
 
-      if (titleElement.length && urlElement.length) {
-        const title = titleElement.text().trim();
-        let url = urlElement.attr('href');
-        const description = descriptionElement.text().trim() || 'Forum thread on CS.RIN.RU';
+      if (!url) return;
 
-        // Only include results that are actually from cs.rin.ru/forum
-        if (url && url.includes('cs.rin.ru/forum')) {
-          results.push({
-            title: title,
-            url: url,
-            description: description,
-            source: 'CS.RIN.RU Forum'
-          });
+      // DuckDuckGo sometimes uses redirect URLs
+      if (url.startsWith('/l/?')) {
+        const urlMatch = url.match(/uddg=([^&]+)/i);
+        if (urlMatch && urlMatch[1]) {
+          url = decodeURIComponent(urlMatch[1]);
         }
+      }
+
+      // Only include results that are actually from cs.rin.ru/forum
+      if (url && url.includes('cs.rin.ru/forum')) {
+        results.push({
+          title: title || 'CS.RIN.RU Forum Thread',
+          url: url,
+          description: 'Forum thread on CS.RIN.RU',
+          source: 'CS.RIN.RU Forum'
+        });
       }
     });
 
