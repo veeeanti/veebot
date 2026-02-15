@@ -348,36 +348,84 @@ function updateBotStatus() {
 // Command handlers
 async function handleSearchCommand(message, args) {
   if (args.length === 0) {
-    return message.reply('Please provide a search query.');
+    return message.reply('Please provide a search query. Usage: `!search [unioncrax|csrin] <query>`\n- `!search <query>` - searches UnionCrax (default)\n- `!search csrin <query>` - searches CS.RIN.RU forum');
   }
 
-  const query = args.join(' ');
-  const searchMessage = await message.reply(`🔍 Searching Google for games matching UnionCrax listings: **${query}**...`);
+  // Check if user specified a source
+  const firstArg = args[0].toLowerCase();
+  let source = 'unioncrax'; // default
+  let queryArgs = args;
+
+  if (firstArg === 'csrin' || firstArg === 'rin') {
+    source = 'csrin';
+    queryArgs = args.slice(1);
+    if (queryArgs.length === 0) {
+      return message.reply('Please provide a search query after the source. Example: `!search csrin Elden Ring`');
+    }
+  } else if (firstArg === 'unioncrax' || firstArg === 'union' || firstArg === 'uc') {
+    source = 'unioncrax';
+    queryArgs = args.slice(1);
+    if (queryArgs.length === 0) {
+      return message.reply('Please provide a search query after the source. Example: `!search unioncrax Elden Ring`');
+    }
+  }
+
+  const query = queryArgs.join(' ');
+  const searchMessage = await message.reply(`🔍 Searching ${source === 'csrin' ? 'CS.RIN.RU forum' : 'UnionCrax'} for: **${query}**...`);
 
   try {
-    // Search Google for games that match UnionCrax listings
-    const searchResult = await searchGoogleForUnionCraxGames(query);
+    if (source === 'csrin') {
+      // Search CS.RIN.RU forum
+      const csRinResults = await searchCsRinForum(query);
 
-    if (searchResult) {
-      await searchMessage.edit(`🔍 Found top result for: **${query}**`);
+      if (csRinResults.length > 0) {
+        await searchMessage.edit(`🔍 Found ${csRinResults.length} result(s) on CS.RIN.RU for: **${query}**`);
 
-      // Create and send embed with the search result
-      const embed = new EmbedBuilder()
-        .setTitle(`🎮 ${searchResult.title}`)
-        .setURL(searchResult.url)
-        .setColor(0x0099ff)
-        .setDescription(searchResult.description || 'No description available')
-        .addFields(
-          { name: 'Source', value: searchResult.source, inline: true },
-          { name: 'Downloads', value: searchResult.downloadCount ? String(searchResult.downloadCount) : 'N/A', inline: true },
-          { name: 'Size', value: searchResult.size || 'N/A', inline: true }
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Game search result from UnionCrax' });
+        // Create embed for CS.RIN.RU results
+        const csRinEmbed = new EmbedBuilder()
+          .setTitle(`🔍 CS.RIN.RU Forum Results`)
+          .setColor(0xff6600)
+          .setDescription(`Found ${csRinResults.length} thread(s) matching "${query}"`)
+          .setTimestamp()
+          .setFooter({ text: 'Forum thread search results' });
 
-      await message.channel.send({ embeds: [embed] });
+        // Add up to 5 results as fields
+        csRinResults.slice(0, 5).forEach((result, index) => {
+          csRinEmbed.addFields({
+            name: `${index + 1}. ${result.title.substring(0, 100)}${result.title.length > 100 ? '...' : ''}`,
+            value: `[View Thread](${result.url})`,
+            inline: false
+          });
+        });
+
+        await message.channel.send({ embeds: [csRinEmbed] });
+      } else {
+        await searchMessage.edit(`🔍 No matching threads found on CS.RIN.RU for: **${query}**`);
+      }
     } else {
-      await searchMessage.edit('🔍 No matching games found on UnionCrax for that query.');
+      // Search UnionCrax (default)
+      const unionCraxResult = await searchGoogleForUnionCraxGames(query);
+
+      if (unionCraxResult) {
+        await searchMessage.edit(`🔍 Found result on UnionCrax for: **${query}**`);
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🎮 ${unionCraxResult.title}`)
+          .setURL(unionCraxResult.url)
+          .setColor(0x0099ff)
+          .setDescription(unionCraxResult.description || 'No description available')
+          .addFields(
+            { name: 'Source', value: unionCraxResult.source, inline: true },
+            { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
+            { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
+          )
+          .setTimestamp()
+          .setFooter({ text: 'Game search result from UnionCrax' });
+
+        await message.channel.send({ embeds: [embed] });
+      } else {
+        await searchMessage.edit(`🔍 No matching games found on UnionCrax for: **${query}**`);
+      }
     }
   } catch (error) {
     logger.error(`Search error: ${error.message}`);
@@ -387,6 +435,9 @@ async function handleSearchCommand(message, args) {
 
 // UnionCrax API configuration
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
+
+// CS.RIN.RU forum configuration
+const CS_RIN_FORUM_BASE = 'https://cs.rin.ru/forum';
 
 // Function to search Google for games that match UnionCrax listings
 async function searchGoogleForUnionCraxGames(query) {
@@ -510,6 +561,130 @@ async function searchUnionCraxGames(query) {
     });
   } catch (error) {
     logger.error(`UnionCrax search failed: ${error.message}`);
+    return [];
+  }
+}
+
+// Function to search CS.RIN.RU forum for threads matching the query
+async function searchCsRinForum(query) {
+  try {
+    const normalizedQuery = normalizeString(query);
+    
+    // CS.RIN.RU search URL - using their search endpoint
+    const searchUrl = `${CS_RIN_FORUM_BASE}/search.php?keywords=${encodeURIComponent(query)}&terms=all&author=&sc=1&sf=titleonly&sr=topics&sk=t&sd=d&st=0&ch=400&t=0&submit=Search`;
+    
+    const response = await axios.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5'
+      },
+      timeout: 15000
+    });
+
+    const $ = load(response.data);
+    const results = [];
+
+    // Parse search results from CS.RIN.RU forum page
+    // The forum uses phpBB, search results are typically in topic rows
+    $('dl.row-item, tr.row, div.topic, a.topictitle, dt a').each((i, element) => {
+      if (results.length >= 5) return; // Limit to top 5 results
+      
+      const $element = $(element);
+      let titleElement = $element.find('a.topictitle').first();
+      
+      // Fallback: try different selectors for phpBB structure
+      if (titleElement.length === 0) {
+        titleElement = $element.find('a').first();
+      }
+      
+      if (titleElement.length === 0 && $element.is('a.topictitle')) {
+        titleElement = $element;
+      }
+      
+      if (titleElement.length && titleElement.attr('href')) {
+        const title = titleElement.text().trim();
+        let url = titleElement.attr('href');
+        
+        // Make URL absolute if it's relative
+        if (url && !url.startsWith('http')) {
+          url = `${CS_RIN_FORUM_BASE}/${url.replace(/^\.\//, '')}`;
+        }
+        
+        // Filter out empty titles and navigation links
+        if (title && title.length > 3 && !title.toLowerCase().includes('skip to content')) {
+          // Check if title matches query
+          const normalizedTitle = normalizeString(title);
+          const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+          let matches = false;
+          
+          // Check for query word matches in title
+          queryWords.forEach(word => {
+            if (normalizedTitle.includes(word)) {
+              matches = true;
+            }
+          });
+          
+          // Also check if the query itself is in the title
+          if (normalizedTitle.includes(normalizedQuery)) {
+            matches = true;
+          }
+          
+          if (matches) {
+            results.push({
+              title: title,
+              url: url,
+              description: 'Forum thread on CS.RIN.RU',
+              source: 'CS.RIN.RU Forum'
+            });
+          }
+        }
+      }
+    });
+
+    // Alternative parsing: look for result list items
+    if (results.length === 0) {
+      $('a[href*="viewtopic.php"]').each((i, element) => {
+        if (results.length >= 5) return;
+        
+        const $link = $(element);
+        const title = $link.text().trim();
+        let url = $link.attr('href');
+        
+        if (url && !url.startsWith('http')) {
+          url = `${CS_RIN_FORUM_BASE}/${url.replace(/^\.\//, '')}`;
+        }
+        
+        if (title && title.length > 3) {
+          const normalizedTitle = normalizeString(title);
+          const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+          let matches = false;
+          
+          queryWords.forEach(word => {
+            if (normalizedTitle.includes(word)) {
+              matches = true;
+            }
+          });
+          
+          if (normalizedTitle.includes(normalizedQuery)) {
+            matches = true;
+          }
+          
+          if (matches && !results.find(r => r.title === title)) {
+            results.push({
+              title: title,
+              url: url,
+              description: 'Forum thread on CS.RIN.RU',
+              source: 'CS.RIN.RU Forum'
+            });
+          }
+        }
+      });
+    }
+
+    return results;
+  } catch (error) {
+    logger.error(`CS.RIN.RU forum search failed: ${error.message}`);
     return [];
   }
 }
