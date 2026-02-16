@@ -570,79 +570,57 @@ async function searchCsRinForum(query) {
   try {
     const normalizedQuery = normalizeString(query);
     
-    // CS.RIN.RU search URL - using their search endpoint
-    const searchUrl = `${CS_RIN_FORUM_BASE}/search.php?keywords=${encodeURIComponent(query)}&terms=all&author=&sc=1&sf=titleonly&sr=topics&sk=t&sd=d&st=0&ch=400&t=0&submit=Search`;
+    // CS.RIN.RU search URL - using the search.php endpoint with keywords parameter
+    // This matches the pattern: https://cs.rin.ru/forum/search.php?keywords=garry
+    const searchUrl = `${CS_RIN_FORUM_BASE}/search.php?keywords=${encodeURIComponent(query)}`;
+    
+    if (DEBUG) {
+      console.log(`DEBUG: Searching CS.RIN.RU with URL: ${searchUrl}`);
+    }
     
     const response = await axios.get(searchUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': CS_RIN_FORUM_BASE
       },
-      timeout: 15000
+      timeout: 15000,
+      maxRedirects: 5
     });
 
     const $ = load(response.data);
     const results = [];
 
     // Parse search results from CS.RIN.RU forum page
-    // The forum uses phpBB, search results are typically in topic rows
-    $('dl.row-item, tr.row, div.topic, a.topictitle, dt a').each((i, element) => {
+    // The forum uses phpBB3, search results are in specific structures
+    // Look for the topmost thread first
+    
+    // Method 1: Look for topic titles in search results (most common structure)
+    $('.topictitle').each((i, element) => {
       if (results.length >= 5) return; // Limit to top 5 results
       
-      const $element = $(element);
-      let titleElement = $element.find('a.topictitle').first();
+      const $link = $(element);
+      const title = $link.text().trim();
+      let url = $link.attr('href');
       
-      // Fallback: try different selectors for phpBB structure
-      if (titleElement.length === 0) {
-        titleElement = $element.find('a').first();
+      // Make URL absolute if it's relative
+      if (url && !url.startsWith('http')) {
+        url = url.startsWith('./') ? url.substring(2) : url;
+        url = `${CS_RIN_FORUM_BASE}/${url}`;
       }
       
-      if (titleElement.length === 0 && $element.is('a.topictitle')) {
-        titleElement = $element;
-      }
-      
-      if (titleElement.length && titleElement.attr('href')) {
-        const title = titleElement.text().trim();
-        let url = titleElement.attr('href');
-        
-        // Make URL absolute if it's relative
-        if (url && !url.startsWith('http')) {
-          url = `${CS_RIN_FORUM_BASE}/${url.replace(/^\.\//, '')}`;
-        }
-        
-        // Filter out empty titles and navigation links
-        if (title && title.length > 3 && !title.toLowerCase().includes('skip to content')) {
-          // Check if title matches query
-          const normalizedTitle = normalizeString(title);
-          const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
-          let matches = false;
-          
-          // Check for query word matches in title
-          queryWords.forEach(word => {
-            if (normalizedTitle.includes(word)) {
-              matches = true;
-            }
-          });
-          
-          // Also check if the query itself is in the title
-          if (normalizedTitle.includes(normalizedQuery)) {
-            matches = true;
-          }
-          
-          if (matches) {
-            results.push({
-              title: title,
-              url: url,
-              description: 'Forum thread on CS.RIN.RU',
-              source: 'CS.RIN.RU Forum'
-            });
-          }
-        }
+      if (title && title.length > 3 && url) {
+        results.push({
+          title: title,
+          url: url,
+          description: 'Forum thread on CS.RIN.RU',
+          source: 'CS.RIN.RU Forum'
+        });
       }
     });
 
-    // Alternative parsing: look for result list items
+    // Method 2: Alternative parsing for different phpBB layouts
     if (results.length === 0) {
       $('a[href*="viewtopic.php"]').each((i, element) => {
         if (results.length >= 5) return;
@@ -651,26 +629,50 @@ async function searchCsRinForum(query) {
         const title = $link.text().trim();
         let url = $link.attr('href');
         
-        if (url && !url.startsWith('http')) {
-          url = `${CS_RIN_FORUM_BASE}/${url.replace(/^\.\//, '')}`;
+        // Skip navigation and non-thread links
+        if (!title || title.length < 4 ||
+            title.toLowerCase().includes('skip to') ||
+            title.toLowerCase().includes('board index') ||
+            title.toLowerCase().includes('search') ||
+            $link.closest('.navbar, .breadcrumbs, nav').length > 0) {
+          return;
         }
         
-        if (title && title.length > 3) {
-          const normalizedTitle = normalizeString(title);
-          const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
-          let matches = false;
-          
-          queryWords.forEach(word => {
-            if (normalizedTitle.includes(word)) {
-              matches = true;
-            }
+        // Make URL absolute if it's relative
+        if (url && !url.startsWith('http')) {
+          url = url.startsWith('./') ? url.substring(2) : url;
+          url = `${CS_RIN_FORUM_BASE}/${url}`;
+        }
+        
+        if (url && !results.find(r => r.url === url)) {
+          results.push({
+            title: title,
+            url: url,
+            description: 'Forum thread on CS.RIN.RU',
+            source: 'CS.RIN.RU Forum'
           });
+        }
+      });
+    }
+
+    // Method 3: Look for search result rows (dl.row-item structure)
+    if (results.length === 0) {
+      $('dl.row-item').each((i, element) => {
+        if (results.length >= 5) return;
+        
+        const $row = $(element);
+        const $titleLink = $row.find('a.topictitle, dt a').first();
+        
+        if ($titleLink.length) {
+          const title = $titleLink.text().trim();
+          let url = $titleLink.attr('href');
           
-          if (normalizedTitle.includes(normalizedQuery)) {
-            matches = true;
+          if (url && !url.startsWith('http')) {
+            url = url.startsWith('./') ? url.substring(2) : url;
+            url = `${CS_RIN_FORUM_BASE}/${url}`;
           }
           
-          if (matches && !results.find(r => r.title === title)) {
+          if (title && title.length > 3 && url) {
             results.push({
               title: title,
               url: url,
@@ -682,9 +684,19 @@ async function searchCsRinForum(query) {
       });
     }
 
+    if (DEBUG) {
+      console.log(`DEBUG: Found ${results.length} results on CS.RIN.RU`);
+      if (results.length > 0) {
+        console.log(`DEBUG: Top result: ${results[0].title}`);
+      }
+    }
+
     return results;
   } catch (error) {
     logger.error(`CS.RIN.RU forum search failed: ${error.message}`);
+    if (DEBUG) {
+      console.error('DEBUG: Full error:', error);
+    }
     return [];
   }
 }
