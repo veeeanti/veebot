@@ -1,6 +1,6 @@
 // Load env
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder, REST, Routes, PermissionFlagsBits, ApplicationCommandType, InteractionContextType, IntegrationTypes } from 'discord.js';
 import axios from 'axios';
 import { load } from 'cheerio';
 import winston from 'winston';
@@ -29,6 +29,9 @@ const FRIENDLY_FIRE = process.env.FRIENDLY_FIRE === 'true';
 const START_TIME = Date.now();
 let lastResponseTime = 0;
 let isSemanticMode = false;
+
+// Spam detection tracking
+const userSpamTracking = new Map(); // userId -> { images: [], links: [] }
 
 // Bot configuration
 const config = {
@@ -66,12 +69,62 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildMembers
   ]
 });
 
 // Command collection
 client.commands = new Collection();
+
+// Define slash commands
+const commands = [
+  {
+    name: 'search',
+    description: 'Search UnionCrax for games',
+    options: [
+      {
+        name: 'query',
+        description: 'The game to search for',
+        type: 3, // STRING type
+        required: true
+      }
+    ],
+    integration_types: [0, 1], // GUILD_INSTALL (0) and USER_INSTALL (1)
+    contexts: [0, 1, 2] // GUILD (0), BOT_DM (1), PRIVATE_CHANNEL (2)
+  },
+  {
+    name: 'info',
+    description: 'Get information about the bot',
+    integration_types: [0, 1],
+    contexts: [0, 1, 2]
+  },
+  {
+    name: 'location',
+    description: 'Get bot location and system information',
+    integration_types: [0, 1],
+    contexts: [0, 1, 2]
+  }
+];
+
+// Register slash commands
+async function registerSlashCommands() {
+  try {
+    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+    
+    console.log('Started refreshing application (/) commands.');
+
+    // Register commands globally (for user installs)
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands }
+    );
+
+    console.log('✅ Successfully registered application commands globally.');
+  } catch (error) {
+    console.error('Error registering slash commands:', error);
+  }
+}
 
 // AI Response Function
 async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
@@ -225,6 +278,9 @@ client.once('ready', async () => {
   // Initialize the semantic system
   await initializeSystem();
   
+  // Register slash commands
+  await registerSlashCommands();
+  
   const mode = isSemanticMode ? 'Semantic' : 'Simple';
   console.log(` Running in ${mode} Mode`);
 
@@ -233,11 +289,48 @@ client.once('ready', async () => {
   setInterval(updateBotStatus, 30000); // Update status every 30 seconds
 });
 
+// Interaction handler for slash commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  try {
+    switch (commandName) {
+      case 'search':
+        await handleSearchSlashCommand(interaction);
+        break;
+      case 'info':
+        await handleInfoSlashCommand(interaction);
+        break;
+      case 'location':
+        await handleLocationSlashCommand(interaction);
+        break;
+      default:
+        await interaction.reply({ content: 'Unknown command.', ephemeral: true });
+    }
+  } catch (error) {
+    logger.error(`Error handling slash command: ${error.message}`);
+    const errorMessage = 'An error occurred while processing your command.';
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({ content: errorMessage, ephemeral: true });
+    } else {
+      await interaction.reply({ content: errorMessage, ephemeral: true });
+    }
+  }
+});
+
 // Message event handler
 client.on('messageCreate', async (message) => {
   if (!shouldProcessMessage(message)) return;
 
-  // Check if message starts with prefix
+  // Spam detection for images
+  await detectImageSpam(message);
+  
+  // Spam detection for links
+  await detectLinkSpam(message);
+
+  // Check if message starts with prefix (legacy command support)
   if (message.content.startsWith(config.prefix)) {
     const args = message.content.slice(config.prefix.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
@@ -255,7 +348,7 @@ client.on('messageCreate', async (message) => {
           await handleLocationCommand(message);
           break;
         default:
-          message.reply(`Unknown command. Available commands: search, info, location`);
+          message.reply(`Unknown command. Use slash commands instead: /search, /info, /location`);
       }
     } catch (error) {
       logger.error(`Error handling command: ${error.message}`);
@@ -319,6 +412,136 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// Spam detection for images
+async function detectImageSpam(message) {
+  if (!message.guild) return; // Only work in guilds
+  
+  const userId = message.author.id;
+  const imageCount = message.attachments.filter(att => 
+    att.contentType && att.contentType.startsWith('image/')
+  ).size;
+  
+  if (imageCount === 0) return;
+  
+  // Initialize tracking for user if not exists
+  if (!userSpamTracking.has(userId)) {
+    userSpamTracking.set(userId, { images: [], links: [] });
+  }
+  
+  const tracking = userSpamTracking.get(userId);
+  const now = Date.now();
+  
+  // Clean old entries (older than 30 seconds)
+  tracking.images = tracking.images.filter(entry => now - entry.timestamp < 30000);
+  
+  // Add current message
+  tracking.images.push({
+    channelId: message.channel.id,
+    imageCount: imageCount,
+    timestamp: now,
+    messageId: message.id
+  });
+  
+  // Check if user sent 4+ images across multiple channels
+  const uniqueChannels = new Set(tracking.images.map(entry => entry.channelId));
+  const totalImages = tracking.images.reduce((sum, entry) => sum + entry.imageCount, 0);
+  
+  if (totalImages >= 4 && uniqueChannels.size > 1) {
+    await handleSpamDetection(message, 'image spam', `Sent ${totalImages} images across ${uniqueChannels.size} channels`);
+    userSpamTracking.delete(userId); // Clear tracking after ban
+  }
+}
+
+// Spam detection for links
+async function detectLinkSpam(message) {
+  if (!message.guild) return; // Only work in guilds
+  
+  const userId = message.author.id;
+  
+  // Detect links in message (simple regex)
+  const linkRegex = /(https?:\/\/[^\s]+)/gi;
+  const links = message.content.match(linkRegex) || [];
+  const linkCount = links.length;
+  
+  if (linkCount === 0) return;
+  
+  // Initialize tracking for user if not exists
+  if (!userSpamTracking.has(userId)) {
+    userSpamTracking.set(userId, { images: [], links: [] });
+  }
+  
+  const tracking = userSpamTracking.get(userId);
+  const now = Date.now();
+  
+  // Clean old entries (older than 30 seconds)
+  tracking.links = tracking.links.filter(entry => now - entry.timestamp < 30000);
+  
+  // Add current message
+  tracking.links.push({
+    channelId: message.channel.id,
+    linkCount: linkCount,
+    timestamp: now,
+    messageId: message.id
+  });
+  
+  // Check if user sent 4+ links in one message OR across multiple channels
+  if (linkCount >= 4) {
+    await handleSpamDetection(message, 'link spam', `Sent ${linkCount} links in one message`);
+    userSpamTracking.delete(userId); // Clear tracking after ban
+    return;
+  }
+  
+  // Check across multiple channels
+  const uniqueChannels = new Set(tracking.links.map(entry => entry.channelId));
+  const totalLinks = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
+  
+  if (totalLinks >= 4 && uniqueChannels.size > 1) {
+    await handleSpamDetection(message, 'link spam', `Sent ${totalLinks} links across ${uniqueChannels.size} channels`);
+    userSpamTracking.delete(userId); // Clear tracking after ban
+  }
+}
+
+// Handle spam detection and auto-ban
+async function handleSpamDetection(message, spamType, reason) {
+  try {
+    const member = message.member;
+    if (!member) return;
+    
+    // Check if bot has permission to ban
+    if (!message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) {
+      logger.warn(`Cannot ban ${member.user.tag}: Missing BAN_MEMBERS permission`);
+      return;
+    }
+    
+    // Don't ban admins or moderators
+    if (member.permissions.has(PermissionFlagsBits.Administrator) || 
+        member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions`);
+      return;
+    }
+    
+    // Log the spam detection
+    logger.warn(`🚨 SPAM DETECTED: ${member.user.tag} (${member.id}) - ${spamType}: ${reason}`);
+    
+    // Try to notify in the channel
+    try {
+      await message.channel.send(`🚨 **Spam detected**: ${member.user.tag} has been automatically banned for ${spamType}.`);
+    } catch (err) {
+      logger.error(`Could not send spam notification: ${err.message}`);
+    }
+    
+    // Ban the user
+    await member.ban({ 
+      reason: `Auto-ban: ${spamType} - ${reason}`,
+      deleteMessageSeconds: 60 * 60 * 24 // Delete messages from last 24 hours
+    });
+    
+    logger.info(`✅ Successfully banned ${member.user.tag} for ${spamType}`);
+  } catch (error) {
+    logger.error(`Error handling spam detection: ${error.message}`);
+  }
+}
+
 // Determine whether to process an incoming message
 function shouldProcessMessage(message) {
   // Never respond to our own messages
@@ -345,87 +568,144 @@ function updateBotStatus() {
   client.user.setActivity(randomStatus, { type: ActivityType.Watching });
 }
 
-// Command handlers
+// Slash command handlers
+async function handleSearchSlashCommand(interaction) {
+  const query = interaction.options.getString('query');
+  
+  await interaction.deferReply();
+  
+  try {
+    const unionCraxResult = await searchGoogleForUnionCraxGames(query);
+
+    if (unionCraxResult) {
+      const embed = new EmbedBuilder()
+        .setTitle(`🎮 ${unionCraxResult.title}`)
+        .setURL(unionCraxResult.url)
+        .setColor(0x0099ff)
+        .setDescription(unionCraxResult.description || 'No description available')
+        .addFields(
+          { name: 'Source', value: unionCraxResult.source, inline: true },
+          { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
+          { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Game search result from UnionCrax' });
+
+      await interaction.editReply({ embeds: [embed] });
+    } else {
+      await interaction.editReply(`🔍 No matching games found on UnionCrax for: **${query}**`);
+    }
+  } catch (error) {
+    logger.error(`Search error: ${error.message}`);
+    await interaction.editReply('❌ An error occurred during the search. Please try again.');
+  }
+}
+
+async function handleInfoSlashCommand(interaction) {
+  const uptime = Date.now() - START_TIME;
+  const hours = Math.floor(uptime / 3600000);
+  const minutes = Math.floor((uptime % 3600000) / 60000);
+  const seconds = Math.floor((uptime % 60000) / 1000);
+
+  let dbStats = null;
+  if (isSemanticMode && ENABLE_DATABASE) {
+    dbStats = await semanticContextManager.getStatistics();
+  }
+
+  const embed = new EmbedBuilder()
+      .setTitle('UC-AIv2 Info')
+      .setColor(0x00ff00)
+      .addFields(
+          { name: 'Model', value: AI_MODEL, inline: true },
+          { name: 'Mode', value: isSemanticMode ? 'Semantic' : 'Simple', inline: true },
+          { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s`, inline: true }
+      );
+
+  if (ENABLE_DATABASE) {
+    embed.addFields({ name: 'Database', value: 'Enabled', inline: true });
+    if (dbStats) {
+      embed.addFields(
+          { name: 'Total Messages', value: dbStats.total_messages, inline: true },
+          { name: 'With Embeddings', value: dbStats.messages_with_embeddings, inline: true },
+          { name: 'Channels', value: dbStats.unique_channels, inline: true }
+      );
+    }
+  } else {
+    embed.addFields({ name: 'Database', value: 'Disabled', inline: true });
+  }
+
+  embed.addFields(
+    { name: 'Mentions Enabled', value: ENABLE_MENTIONS ? 'Yes' : 'No', inline: true }
+  );
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleLocationSlashCommand(interaction) {
+  try {
+    const locationInfo = {
+      workingDirectory: process.cwd(),
+      platform: process.platform,
+      architecture: process.arch,
+      nodeVersion: process.version,
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'production'
+    };
+
+    const embed = new EmbedBuilder()
+      .setTitle('📍 Bot Location Information')
+      .setColor(0x0099ff)
+      .addFields(
+        { name: 'Working Directory', value: `\`${locationInfo.workingDirectory}\``, inline: false },
+        { name: 'Platform', value: locationInfo.platform, inline: true },
+        { name: 'Architecture', value: locationInfo.architecture, inline: true },
+        { name: 'Node.js Version', value: locationInfo.nodeVersion, inline: true },
+        { name: 'Environment', value: locationInfo.environment, inline: true },
+        { name: 'Uptime', value: `${Math.floor(locationInfo.uptime / 60)} minutes`, inline: true },
+        { name: 'Memory Usage', value: `${Math.round(locationInfo.memoryUsage.heapUsed / 1024 / 1024)} MB`, inline: true }
+      )
+      .setTimestamp()
+      .setFooter({ text: 'Bot location details' });
+
+    await interaction.reply({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Location command error: ${error.message}`);
+    await interaction.reply({ content: '❌ An error occurred while getting location information.', ephemeral: true });
+  }
+}
+
+// Legacy command handlers (for prefix commands)
 async function handleSearchCommand(message, args) {
   if (args.length === 0) {
-    return message.reply('Please provide a search query. Usage: `!search [unioncrax|csrin] <query>`\n- `!search <query>` - searches UnionCrax (default)\n- `!search csrin <query>` - searches CS.RIN.RU forum');
+    return message.reply('Please provide a search query. Usage: `!search <query>` or use `/search` slash command');
   }
 
-  // Check if user specified a source
-  const firstArg = args[0].toLowerCase();
-  let source = 'unioncrax'; // default
-  let queryArgs = args;
-
-  if (firstArg === 'csrin' || firstArg === 'rin') {
-    source = 'csrin';
-    queryArgs = args.slice(1);
-    if (queryArgs.length === 0) {
-      return message.reply('Please provide a search query after the source. Example: `!search csrin Elden Ring`');
-    }
-  } else if (firstArg === 'unioncrax' || firstArg === 'union' || firstArg === 'uc') {
-    source = 'unioncrax';
-    queryArgs = args.slice(1);
-    if (queryArgs.length === 0) {
-      return message.reply('Please provide a search query after the source. Example: `!search unioncrax Elden Ring`');
-    }
-  }
-
-  const query = queryArgs.join(' ');
-  const searchMessage = await message.reply(`🔍 Searching ${source === 'csrin' ? 'CS.RIN.RU forum' : 'UnionCrax'} for: **${query}**...`);
+  const query = args.join(' ');
+  const searchMessage = await message.reply(`🔍 Searching UnionCrax for: **${query}**...`);
 
   try {
-    if (source === 'csrin') {
-      // Search CS.RIN.RU forum
-      const csRinResults = await searchCsRinForum(query);
+    const unionCraxResult = await searchGoogleForUnionCraxGames(query);
 
-      if (csRinResults.length > 0) {
-        await searchMessage.edit(`🔍 Found ${csRinResults.length} result(s) on CS.RIN.RU for: **${query}**`);
+    if (unionCraxResult) {
+      await searchMessage.edit(`🔍 Found result on UnionCrax for: **${query}**`);
 
-        // Create embed for CS.RIN.RU results
-        const csRinEmbed = new EmbedBuilder()
-          .setTitle(`🔍 CS.RIN.RU Forum Results`)
-          .setColor(0xff6600)
-          .setDescription(`Found ${csRinResults.length} thread(s) matching "${query}"`)
-          .setTimestamp()
-          .setFooter({ text: 'Forum thread search results' });
+      const embed = new EmbedBuilder()
+        .setTitle(`🎮 ${unionCraxResult.title}`)
+        .setURL(unionCraxResult.url)
+        .setColor(0x0099ff)
+        .setDescription(unionCraxResult.description || 'No description available')
+        .addFields(
+          { name: 'Source', value: unionCraxResult.source, inline: true },
+          { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
+          { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Game search result from UnionCrax' });
 
-        // Add up to 5 results as fields
-        csRinResults.slice(0, 5).forEach((result, index) => {
-          csRinEmbed.addFields({
-            name: `${index + 1}. ${result.title.substring(0, 100)}${result.title.length > 100 ? '...' : ''}`,
-            value: `[View Thread](${result.url})`,
-            inline: false
-          });
-        });
-
-        await message.channel.send({ embeds: [csRinEmbed] });
-      } else {
-        await searchMessage.edit(`🔍 No matching threads found on CS.RIN.RU for: **${query}**`);
-      }
+      await message.channel.send({ embeds: [embed] });
     } else {
-      // Search UnionCrax (default)
-      const unionCraxResult = await searchGoogleForUnionCraxGames(query);
-
-      if (unionCraxResult) {
-        await searchMessage.edit(`🔍 Found result on UnionCrax for: **${query}**`);
-
-        const embed = new EmbedBuilder()
-          .setTitle(`🎮 ${unionCraxResult.title}`)
-          .setURL(unionCraxResult.url)
-          .setColor(0x0099ff)
-          .setDescription(unionCraxResult.description || 'No description available')
-          .addFields(
-            { name: 'Source', value: unionCraxResult.source, inline: true },
-            { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
-            { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
-          )
-          .setTimestamp()
-          .setFooter({ text: 'Game search result from UnionCrax, using Google search' });
-
-        await message.channel.send({ embeds: [embed] });
-      } else {
-        await searchMessage.edit(`🔍 No matching games found on UnionCrax for: **${query}**`);
-      }
+      await searchMessage.edit(`🔍 No matching games found on UnionCrax for: **${query}**`);
     }
   } catch (error) {
     logger.error(`Search error: ${error.message}`);
@@ -435,9 +715,6 @@ async function handleSearchCommand(message, args) {
 
 // UnionCrax API configuration
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
-
-// CS.RIN.RU forum configuration
-const CS_RIN_FORUM_BASE = 'https://cs.rin.ru/forum';
 
 // Function to search Google for games that match UnionCrax listings
 async function searchGoogleForUnionCraxGames(query) {
@@ -565,142 +842,6 @@ async function searchUnionCraxGames(query) {
   }
 }
 
-// Function to search CS.RIN.RU forum for threads matching the query
-async function searchCsRinForum(query) {
-  try {
-    const normalizedQuery = normalizeString(query);
-    
-    // CS.RIN.RU search URL - using the search.php endpoint with keywords parameter
-    // This matches the pattern: https://cs.rin.ru/forum/search.php?keywords=garry
-    const searchUrl = `${CS_RIN_FORUM_BASE}/search.php?keywords=${encodeURIComponent(query)}`;
-    
-    if (DEBUG) {
-      console.log(`DEBUG: Searching CS.RIN.RU with URL: ${searchUrl}`);
-    }
-    
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': CS_RIN_FORUM_BASE
-      },
-      timeout: 15000,
-      maxRedirects: 5
-    });
-
-    const $ = load(response.data);
-    const results = [];
-
-    // Parse search results from CS.RIN.RU forum page
-    // The forum uses phpBB3, search results are in specific structures
-    // Look for the topmost thread first
-    
-    // Method 1: Look for topic titles in search results (most common structure)
-    $('.topictitle').each((i, element) => {
-      if (results.length >= 5) return; // Limit to top 5 results
-      
-      const $link = $(element);
-      const title = $link.text().trim();
-      let url = $link.attr('href');
-      
-      // Make URL absolute if it's relative
-      if (url && !url.startsWith('http')) {
-        url = url.startsWith('./') ? url.substring(2) : url;
-        url = `${CS_RIN_FORUM_BASE}/${url}`;
-      }
-      
-      if (title && title.length > 3 && url) {
-        results.push({
-          title: title,
-          url: url,
-          description: 'Forum thread on CS.RIN.RU',
-          source: 'CS.RIN.RU Forum'
-        });
-      }
-    });
-
-    // Method 2: Alternative parsing for different phpBB layouts
-    if (results.length === 0) {
-      $('a[href*="viewtopic.php"]').each((i, element) => {
-        if (results.length >= 5) return;
-        
-        const $link = $(element);
-        const title = $link.text().trim();
-        let url = $link.attr('href');
-        
-        // Skip navigation and non-thread links
-        if (!title || title.length < 4 ||
-            title.toLowerCase().includes('skip to') ||
-            title.toLowerCase().includes('board index') ||
-            title.toLowerCase().includes('search') ||
-            $link.closest('.navbar, .breadcrumbs, nav').length > 0) {
-          return;
-        }
-        
-        // Make URL absolute if it's relative
-        if (url && !url.startsWith('http')) {
-          url = url.startsWith('./') ? url.substring(2) : url;
-          url = `${CS_RIN_FORUM_BASE}/${url}`;
-        }
-        
-        if (url && !results.find(r => r.url === url)) {
-          results.push({
-            title: title,
-            url: url,
-            description: 'Forum thread on CS.RIN.RU',
-            source: 'CS.RIN.RU Forum'
-          });
-        }
-      });
-    }
-
-    // Method 3: Look for search result rows (dl.row-item structure)
-    if (results.length === 0) {
-      $('dl.row-item').each((i, element) => {
-        if (results.length >= 5) return;
-        
-        const $row = $(element);
-        const $titleLink = $row.find('a.topictitle, dt a').first();
-        
-        if ($titleLink.length) {
-          const title = $titleLink.text().trim();
-          let url = $titleLink.attr('href');
-          
-          if (url && !url.startsWith('http')) {
-            url = url.startsWith('./') ? url.substring(2) : url;
-            url = `${CS_RIN_FORUM_BASE}/${url}`;
-          }
-          
-          if (title && title.length > 3 && url) {
-            results.push({
-              title: title,
-              url: url,
-              description: 'Forum thread on CS.RIN.RU',
-              source: 'CS.RIN.RU Forum'
-            });
-          }
-        }
-      });
-    }
-
-    if (DEBUG) {
-      console.log(`DEBUG: Found ${results.length} results on CS.RIN.RU`);
-      if (results.length > 0) {
-        console.log(`DEBUG: Top result: ${results[0].title}`);
-      }
-    }
-
-    return results;
-  } catch (error) {
-    logger.error(`CS.RIN.RU forum search failed: ${error.message}`);
-    if (DEBUG) {
-      console.error('DEBUG: Full error:', error);
-    }
-    return [];
-  }
-}
-
 async function performWebSearch(query) {
   try {
     // Use web scraping to get actual search results
@@ -753,28 +894,6 @@ async function performWebSearch(query) {
       description: `Could not fetch live results. Click to search for ${query}`,
       source: 'Web Search'
     }];
-  }
-}
-
-// Combined search function
-async function performCombinedSearch(query) {
-  try {
-    // Perform both searches in parallel
-    const [webResults, unionCraxResults] = await Promise.all([
-      performWebSearch(query),
-      searchUnionCraxGames(query)
-    ]);
-
-    // Combine results, prioritizing UnionCrax games
-    const combinedResults = [...unionCraxResults, ...webResults];
-
-    // Return only the top result
-    return combinedResults.slice(0, 1);
-  } catch (error) {
-    logger.error(`Combined search failed: ${error.message}`);
-    // Fallback to web search only, but still return only top result
-    const webResults = await performWebSearch(query);
-    return webResults.slice(0, 1);
   }
 }
 
