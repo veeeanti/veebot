@@ -1,6 +1,15 @@
 // Load env
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Collection, ActivityType, EmbedBuilder, REST, Routes, PermissionFlagsBits, ApplicationCommandType, InteractionContextType, IntegrationTypes } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Collection,
+  ActivityType,
+  EmbedBuilder,
+  REST,
+  Routes,
+  PermissionFlagsBits,
+} from 'discord.js';
 import axios from 'axios';
 import { load } from 'cheerio';
 import winston from 'winston';
@@ -10,47 +19,51 @@ import { testConnection, initializeDatabase, closeDatabase } from './database.js
 import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
 
-// Configuration
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const LOCAL = process.env.LOCAL === 'true';
-const AI_MODEL = process.env.AI_MODEL;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+// ─── Configuration ────────────────────────────────────────────────────────────
+const DISCORD_TOKEN          = process.env.DISCORD_TOKEN;
+const GUILD_ID               = process.env.GUILD_ID;
+const CHANNEL_ID             = process.env.CHANNEL_ID;
+const LOCAL                  = process.env.LOCAL === 'true';
+const AI_MODEL               = process.env.AI_MODEL;
+const OPENROUTER_API_KEY     = process.env.OPENROUTER_API_KEY;
 const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
-const PROMPT = process.env.PROMPT || '';
-const DEBUG = process.env.DEBUG === 'true';
-const ENABLE_MENTIONS = process.env.ENABLE_MENTIONS === 'true';
+const PROMPT                 = process.env.PROMPT || '';
+const DEBUG                  = process.env.DEBUG === 'true';
+const ENABLE_MENTIONS        = process.env.ENABLE_MENTIONS === 'true';
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
-const ENABLE_DATABASE = process.env.ENABLE_DATABASE === 'true';
-const DATABASE_URL = process.env.DATABASE_URL;
-const FRIENDLY_FIRE = process.env.FRIENDLY_FIRE === 'true';
+const ENABLE_DATABASE        = process.env.ENABLE_DATABASE === 'true';
+const DATABASE_URL           = process.env.DATABASE_URL;
+const FRIENDLY_FIRE          = process.env.FRIENDLY_FIRE === 'true';
+const SPAM_DETECTION_ENABLED = process.env.SPAM_DETECTION_ENABLED !== 'false'; // default ON
+const MOD_LOG_CHANNEL_ID     = process.env.MOD_LOG_CHANNEL_ID || null;
+
+// Spam detection thresholds (configurable via env)
+const SPAM_IMAGE_THRESHOLD   = parseInt(process.env.SPAM_IMAGE_THRESHOLD  || '4', 10);
+const SPAM_LINK_THRESHOLD    = parseInt(process.env.SPAM_LINK_THRESHOLD   || '4', 10);
+const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10);
 
 const START_TIME = Date.now();
 let lastResponseTime = 0;
 let isSemanticMode = false;
 
-// Spam detection tracking
+// ─── Spam detection tracking ──────────────────────────────────────────────────
 const userSpamTracking = new Map(); // userId -> { images: [], links: [] }
 
-// Bot configuration
+// ─── Bot configuration ────────────────────────────────────────────────────────
 const config = {
   prefix: process.env.BOT_PREFIX || '!',
   searchEngine: process.env.SEARCH_ENGINE || 'https://www.google.com/search?q=',
-  helpKeywords: {
-    'search': 'Searches the web for information',
-    'info': 'Provides bot information'
-  },
   statusMessages: [
     'no dont do that, dont stick your hand in',
     'no tennis balls',
     'contact @vee.anti for help or smth',
     "I'm just doing this to learn pretty much.",
-    'meow'
-  ]
+    'meow',
+    'welcome to the machine',
+  ],
 };
 
-// Initialize logger
+// ─── Logger ───────────────────────────────────────────────────────────────────
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -59,25 +72,25 @@ const logger = winston.createLogger({
   ),
   transports: [
     new winston.transports.Console(),
-    new winston.transports.File({ filename: 'logs/bot.log' })
-  ]
+    new winston.transports.File({ filename: 'logs/bot.log' }),
+  ],
 });
 
-// Create Discord client
+// ─── Discord client ───────────────────────────────────────────────────────────
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildMembers
-  ]
+    GatewayIntentBits.GuildMembers,
+  ],
 });
 
-// Command collection
 client.commands = new Collection();
 
-// Define slash commands
+// ─── Slash command definitions ────────────────────────────────────────────────
+// Using raw JSON objects so they work with both v13 and v14 REST API
 const commands = [
   {
     name: 'search',
@@ -86,66 +99,107 @@ const commands = [
       {
         name: 'query',
         description: 'The game to search for',
-        type: 3, // STRING type
-        required: true
-      }
+        type: 3, // STRING
+        required: true,
+      },
     ],
-    integration_types: [0, 1], // GUILD_INSTALL (0) and USER_INSTALL (1)
-    contexts: [0, 1, 2] // GUILD (0), BOT_DM (1), PRIVATE_CHANNEL (2)
+    integration_types: [0, 1], // GUILD_INSTALL, USER_INSTALL
+    contexts: [0, 1, 2],       // GUILD, BOT_DM, PRIVATE_CHANNEL
   },
   {
     name: 'info',
     description: 'Get information about the bot',
     integration_types: [0, 1],
-    contexts: [0, 1, 2]
+    contexts: [0, 1, 2],
   },
   {
     name: 'location',
     description: 'Get bot location and system information',
     integration_types: [0, 1],
-    contexts: [0, 1, 2]
-  }
+    contexts: [0, 1, 2],
+  },
+  {
+    name: 'ping',
+    description: 'Check the bot\'s latency and API response time',
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+  },
+  {
+    name: 'ask',
+    description: 'Ask the AI a question directly',
+    options: [
+      {
+        name: 'question',
+        description: 'Your question for the AI',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+  },
+  {
+    name: 'stats',
+    description: 'Show server statistics',
+    integration_types: [0], // Guild only
+    contexts: [0],
+  },
+  {
+    name: 'help',
+    description: 'Show all available commands and their descriptions',
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+  },
 ];
 
-// Register slash commands
+// ─── Register slash commands ──────────────────────────────────────────────────
 async function registerSlashCommands() {
   try {
     const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-    
-    console.log('Started refreshing application (/) commands.');
 
-    // Register commands globally (for user installs)
+    logger.info('Started refreshing application (/) commands.');
+    console.log('🔄 Registering slash commands...');
+
+    // Register globally (supports both guild install and user install)
     await rest.put(
       Routes.applicationCommands(client.user.id),
       { body: commands }
     );
 
+    // Also register to the home guild for instant updates during development
+    if (GUILD_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+        { body: commands }
+      );
+      console.log(`✅ Registered guild commands to ${GUILD_ID} (instant update).`);
+    }
+
     console.log('✅ Successfully registered application commands globally.');
+    logger.info('Slash commands registered successfully.');
   } catch (error) {
-    console.error('Error registering slash commands:', error);
+    logger.error(`Error registering slash commands: ${error.message}`);
+    console.error('❌ Error registering slash commands:', error);
   }
 }
 
-// AI Response Function
+// ─── AI Response Function ─────────────────────────────────────────────────────
 async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
   try {
     let contextText = '';
-    
+
     if (isSemanticMode && semanticContextManager.isReady()) {
       const relevantContext = await semanticContextManager.getRelevantContext(userInput, guildId, authorId);
-      
-      relevantContext.slice(-10).forEach((msg, i) => {
+
+      relevantContext.slice(-10).forEach((msg) => {
         const speaker = msg.type === 'assistant' ? 'AM' : msg.author;
         const similarity = msg.similarity ? ` (relevance: ${(msg.similarity * 100).toFixed(1)}%)` : '';
         contextText += `${speaker}: ${msg.content}${similarity}\n`;
       });
-      
+
       if (DEBUG) {
-        console.log(` Used semantic context: ${relevantContext.length} relevant messages`);
+        console.log(`🔍 Used semantic context: ${relevantContext.length} relevant messages`);
       }
-    } else {
-      // Fallback to simple recent messages from cache
-      contextText = '';
     }
 
     const promptText = `${PROMPT}\n\n${contextText}Human: ${userInput}\nAM:`;
@@ -155,24 +209,23 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     if (LOCAL) {
       throw new Error('Local model not supported in Node.js version.');
     } else {
-      // OpenRouter API
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: AI_MODEL,
           messages: [
             { role: 'system', content: PROMPT },
-            { role: 'user', content: `${promptText}\nKeep your response under 3 sentences.` }
+            { role: 'user', content: `${promptText}\nKeep your response under 3 sentences.` },
           ],
           temperature: 0.7,
-          max_tokens: 120
+          max_tokens: 120,
         },
         {
           headers: {
-            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
           },
-          timeout: 60000
+          timeout: 60000,
         }
       );
 
@@ -189,107 +242,112 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
 
     // Store messages in database if semantic mode is enabled
     if (isSemanticMode && discordMessageId && authorId && authorName) {
-      // Store user message
       await semanticContextManager.storeUserMessage({
-        discordMessageId: discordMessageId,
+        discordMessageId,
         content: userInput,
-        authorId: authorId,
-        authorName: authorName,
-        channelId: channelId,
-        guildId: guildId
+        authorId,
+        authorName,
+        channelId,
+        guildId,
       });
 
-      // Store assistant response
       const assistantMessageId = `assistant_${discordMessageId}`;
       await semanticContextManager.storeAssistantMessage({
         discordMessageId: assistantMessageId,
         content: reply,
-        channelId: channelId,
-        guildId: guildId
+        channelId,
+        guildId,
       });
     }
 
     return reply;
   } catch (err) {
-    console.error('❌ Error generating AI response:', err);
+    logger.error(`Error generating AI response: ${err.message}`);
     return 'I am experiencing technical difficulties. How annoying.';
   }
 }
 
-// Initialize System
+// ─── Initialize System ────────────────────────────────────────────────────────
 async function initializeSystem() {
-  console.log('Initializing UC-AIv2...');
-  
-  // Check if database is enabled
+  console.log('🚀 Initializing UC-AIv2...');
+
   if (!ENABLE_DATABASE) {
-    console.log(' Database DISABLED');
+    console.log('⚠️  Database DISABLED');
     console.log('   - Running in Simple Mode (no database)');
     console.log('   - Basic conversation without memory');
     return;
   }
-  
-  // Test database connection if semantic search is enabled
+
   if (ENABLE_SEMANTIC_SEARCH) {
     const dbConnected = await testConnection();
     if (!dbConnected) {
-      console.warn(' Database connection failed, falling back to simple mode');
+      console.warn('⚠️  Database connection failed, falling back to simple mode');
       isSemanticMode = false;
     } else {
       const schemaInitialized = await initializeDatabase();
       if (!schemaInitialized) {
-        console.warn(' Database schema initialization failed, falling back to simple mode');
+        console.warn('⚠️  Database schema initialization failed, falling back to simple mode');
         isSemanticMode = false;
       } else {
         const embeddingWorking = await testEmbeddingService();
         if (!embeddingWorking) {
-          console.warn(' Embedding service test failed, but continuing with fallback embeddings');
+          console.warn('⚠️  Embedding service test failed, but continuing with fallback embeddings');
         }
-        
+
         const contextInitialized = await semanticContextManager.initialize();
         if (contextInitialized) {
           isSemanticMode = true;
         } else {
-          console.warn(' Semantic context manager initialization failed, falling back to simple mode');
+          console.warn('⚠️  Semantic context manager initialization failed, falling back to simple mode');
           isSemanticMode = false;
         }
       }
     }
   }
-  
+
   if (isSemanticMode) {
-    console.log(' Semantic Context Mode ENABLED');
+    console.log('✅ Semantic Context Mode ENABLED');
     console.log('   - Using PostgreSQL for message storage');
     console.log('   - Using text-based similarity for semantic search');
     console.log('   - Context-aware responses based on message similarity');
   } else if (ENABLE_DATABASE) {
-    console.log(' Simple Mode ENABLED (no semantic context)');
+    console.log('ℹ️  Simple Mode ENABLED (no semantic context)');
     console.log('   - Using basic conversation memory');
   } else {
-    console.log(' Simple Mode ENABLED (no database)');
+    console.log('ℹ️  Simple Mode ENABLED (no database)');
     console.log('   - No conversation memory');
   }
 }
 
-// Bot ready event
+// ─── Bot ready event ──────────────────────────────────────────────────────────
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}!`);
-  console.log(`Logged in as ${client.user.tag} — Lets get this bread started`);
-  
-  // Initialize the semantic system
-  await initializeSystem();
-  
-  // Register slash commands
-  await registerSlashCommands();
-  
-  const mode = isSemanticMode ? 'Semantic' : 'Simple';
-  console.log(` Running in ${mode} Mode`);
+  console.log(`\n✅ Logged in as ${client.user.tag} — Let's get this bread started`);
 
-  // Set bot status
+  await initializeSystem();
+  await registerSlashCommands();
+
+  const mode = isSemanticMode ? 'Semantic' : 'Simple';
+  console.log(`ℹ️  Running in ${mode} Mode\n`);
+
   updateBotStatus();
-  setInterval(updateBotStatus, 30000); // Update status every 30 seconds
+  setInterval(updateBotStatus, 30000);
+
+  // Periodically purge stale spam-tracking entries to prevent memory leaks
+  setInterval(() => {
+    const now = Date.now();
+    for (const [userId, tracking] of userSpamTracking.entries()) {
+      tracking.images = tracking.images.filter(e => now - e.timestamp < SPAM_WINDOW_MS);
+      tracking.links  = tracking.links.filter(e => now - e.timestamp < SPAM_WINDOW_MS);
+      if (tracking.images.length === 0 && tracking.links.length === 0) {
+        userSpamTracking.delete(userId);
+      }
+    }
+    if (DEBUG) console.log(`DEBUG: Spam tracking map size after cleanup: ${userSpamTracking.size}`);
+  }, 60000); // run every minute
 });
 
-// Interaction handler for slash commands
+// ─── Interaction handler ──────────────────────────────────────────────────────
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -306,12 +364,24 @@ client.on('interactionCreate', async (interaction) => {
       case 'location':
         await handleLocationSlashCommand(interaction);
         break;
+      case 'ping':
+        await handlePingSlashCommand(interaction);
+        break;
+      case 'ask':
+        await handleAskSlashCommand(interaction);
+        break;
+      case 'stats':
+        await handleStatsSlashCommand(interaction);
+        break;
+      case 'help':
+        await handleHelpSlashCommand(interaction);
+        break;
       default:
-        await interaction.reply({ content: 'Unknown command.', ephemeral: true });
+        await interaction.reply({ content: '❓ Unknown command.', ephemeral: true });
     }
   } catch (error) {
-    logger.error(`Error handling slash command: ${error.message}`);
-    const errorMessage = 'An error occurred while processing your command.';
+    logger.error(`Error handling slash command "${commandName}": ${error.message}`);
+    const errorMessage = '❌ An error occurred while processing your command.';
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ content: errorMessage, ephemeral: true });
     } else {
@@ -320,23 +390,22 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Message event handler
+// ─── Message event handler ────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {
+  // Run spam detection for ALL non-bot guild messages, regardless of other filters
+  if (SPAM_DETECTION_ENABLED && message.guild && !message.author.bot) {
+    await detectImageSpam(message);
+    await detectLinkSpam(message);
+  }
+
   if (!shouldProcessMessage(message)) return;
 
-  // Spam detection for images
-  await detectImageSpam(message);
-  
-  // Spam detection for links
-  await detectLinkSpam(message);
-
-  // Check if message starts with prefix (legacy command support)
+  // Legacy prefix commands
   if (message.content.startsWith(config.prefix)) {
     const args = message.content.slice(config.prefix.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
 
     try {
-      // Handle commands
       switch (commandName) {
         case 'search':
           await handleSearchCommand(message, args);
@@ -348,11 +417,11 @@ client.on('messageCreate', async (message) => {
           await handleLocationCommand(message);
           break;
         default:
-          message.reply(`Unknown command. Use slash commands instead: /search, /info, /location`);
+          message.reply(`❓ Unknown command. Use slash commands: /search, /info, /location, /ping, /ask, /stats, /help`);
       }
     } catch (error) {
-      logger.error(`Error handling command: ${error.message}`);
-      message.reply('An error occurred while processing your command.');
+      logger.error(`Error handling prefix command: ${error.message}`);
+      message.reply('❌ An error occurred while processing your command.');
     }
   }
 
@@ -378,7 +447,6 @@ client.on('messageCreate', async (message) => {
   if (shouldRespond) {
     let userInput = message.content;
 
-    // Include replied message context
     if (message.reference) {
       try {
         const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
@@ -388,8 +456,7 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Delay before typing starts (simulate thinking)
-    const preTypingDelay = Math.floor(Math.random() * 2000) + 1000; // 1–3 seconds
+    const preTypingDelay = Math.floor(Math.random() * 2000) + 1000;
     await new Promise(res => setTimeout(res, preTypingDelay));
 
     await message.channel.sendTyping();
@@ -403,7 +470,6 @@ client.on('messageCreate', async (message) => {
       message.author.username
     );
 
-    // Delay based on word count (simulate typing duration)
     const wordCount = reply.split(/\s+/).length;
     const typingDuration = Math.min(8000, wordCount * 150 + Math.random() * 500);
     await new Promise(res => setTimeout(res, typingDuration));
@@ -412,145 +478,177 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Spam detection for images
+// ─── Spam detection ───────────────────────────────────────────────────────────
 async function detectImageSpam(message) {
-  if (!message.guild) return; // Only work in guilds
-  
+  if (!message.guild) return;
+
   const userId = message.author.id;
-  const imageCount = message.attachments.filter(att => 
+  // Count image attachments (including GIFs and other image types)
+  const imageCount = message.attachments.filter(att =>
     att.contentType && att.contentType.startsWith('image/')
   ).size;
-  
+
   if (imageCount === 0) return;
-  
-  // Initialize tracking for user if not exists
+
   if (!userSpamTracking.has(userId)) {
     userSpamTracking.set(userId, { images: [], links: [] });
   }
-  
+
   const tracking = userSpamTracking.get(userId);
   const now = Date.now();
-  
-  // Clean old entries (older than 30 seconds)
-  tracking.images = tracking.images.filter(entry => now - entry.timestamp < 30000);
-  
-  // Add current message
-  tracking.images.push({
-    channelId: message.channel.id,
-    imageCount: imageCount,
-    timestamp: now,
-    messageId: message.id
-  });
-  
-  // Check if user sent 4+ images across multiple channels
+
+  // Slide the window
+  tracking.images = tracking.images.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
+  tracking.images.push({ channelId: message.channel.id, imageCount, timestamp: now, messageId: message.id });
+
   const uniqueChannels = new Set(tracking.images.map(entry => entry.channelId));
-  const totalImages = tracking.images.reduce((sum, entry) => sum + entry.imageCount, 0);
-  
-  if (totalImages >= 4 && uniqueChannels.size > 1) {
-    await handleSpamDetection(message, 'image spam', `Sent ${totalImages} images across ${uniqueChannels.size} channels`);
-    userSpamTracking.delete(userId); // Clear tracking after ban
+  const totalImages    = tracking.images.reduce((sum, entry) => sum + entry.imageCount, 0);
+
+  if (DEBUG) {
+    console.log(`DEBUG [ImageSpam] ${message.author.tag}: ${totalImages} images across ${uniqueChannels.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
+  }
+
+  // Trigger: threshold images sent across more than one channel within the window
+  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size > 1) {
+    await handleSpamDetection(
+      message,
+      'image spam',
+      `Sent ${totalImages} image(s) across ${uniqueChannels.size} channels within ${SPAM_WINDOW_MS / 1000}s`
+    );
+    userSpamTracking.delete(userId);
   }
 }
 
-// Spam detection for links
 async function detectLinkSpam(message) {
-  if (!message.guild) return; // Only work in guilds
-  
-  const userId = message.author.id;
-  
-  // Detect links in message (simple regex)
+  if (!message.guild) return;
+
+  const userId    = message.author.id;
   const linkRegex = /(https?:\/\/[^\s]+)/gi;
-  const links = message.content.match(linkRegex) || [];
+  const links     = message.content.match(linkRegex) || [];
   const linkCount = links.length;
-  
+
   if (linkCount === 0) return;
-  
-  // Initialize tracking for user if not exists
+
   if (!userSpamTracking.has(userId)) {
     userSpamTracking.set(userId, { images: [], links: [] });
   }
-  
+
   const tracking = userSpamTracking.get(userId);
   const now = Date.now();
-  
-  // Clean old entries (older than 30 seconds)
-  tracking.links = tracking.links.filter(entry => now - entry.timestamp < 30000);
-  
-  // Add current message
-  tracking.links.push({
-    channelId: message.channel.id,
-    linkCount: linkCount,
-    timestamp: now,
-    messageId: message.id
-  });
-  
-  // Check if user sent 4+ links in one message OR across multiple channels
-  if (linkCount >= 4) {
-    await handleSpamDetection(message, 'link spam', `Sent ${linkCount} links in one message`);
-    userSpamTracking.delete(userId); // Clear tracking after ban
+
+  // Slide the window
+  tracking.links = tracking.links.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
+  tracking.links.push({ channelId: message.channel.id, linkCount, timestamp: now, messageId: message.id });
+
+  if (DEBUG) {
+    const uniqueCh   = new Set(tracking.links.map(e => e.channelId));
+    const totalLinks = tracking.links.reduce((sum, e) => sum + e.linkCount, 0);
+    console.log(`DEBUG [LinkSpam] ${message.author.tag}: ${totalLinks} links across ${uniqueCh.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
+  }
+
+  // Trigger 1: threshold or more links in a single message (mass-link blast)
+  if (linkCount >= SPAM_LINK_THRESHOLD) {
+    await handleSpamDetection(
+      message,
+      'link spam',
+      `Sent ${linkCount} link(s) in a single message`
+    );
+    userSpamTracking.delete(userId);
     return;
   }
-  
-  // Check across multiple channels
+
+  // Trigger 2: threshold or more links spread across multiple channels within the window
   const uniqueChannels = new Set(tracking.links.map(entry => entry.channelId));
-  const totalLinks = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
-  
-  if (totalLinks >= 4 && uniqueChannels.size > 1) {
-    await handleSpamDetection(message, 'link spam', `Sent ${totalLinks} links across ${uniqueChannels.size} channels`);
-    userSpamTracking.delete(userId); // Clear tracking after ban
+  const totalLinks     = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
+
+  if (totalLinks >= SPAM_LINK_THRESHOLD && uniqueChannels.size > 1) {
+    await handleSpamDetection(
+      message,
+      'link spam',
+      `Sent ${totalLinks} link(s) across ${uniqueChannels.size} channels within ${SPAM_WINDOW_MS / 1000}s`
+    );
+    userSpamTracking.delete(userId);
   }
 }
 
-// Handle spam detection and auto-ban
 async function handleSpamDetection(message, spamType, reason) {
   try {
     const member = message.member;
     if (!member) return;
-    
-    // Check if bot has permission to ban
+
+    // Ensure the bot has permission to ban
     if (!message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) {
       logger.warn(`Cannot ban ${member.user.tag}: Missing BAN_MEMBERS permission`);
       return;
     }
-    
-    // Don't ban admins or moderators
-    if (member.permissions.has(PermissionFlagsBits.Administrator) || 
-        member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions`);
+
+    // Never auto-ban admins or moderators
+    if (
+      member.permissions.has(PermissionFlagsBits.Administrator) ||
+      member.permissions.has(PermissionFlagsBits.ModerateMembers)
+    ) {
+      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions — skipping auto-ban`);
       return;
     }
-    
-    // Log the spam detection
+
     logger.warn(`🚨 SPAM DETECTED: ${member.user.tag} (${member.id}) - ${spamType}: ${reason}`);
-    
-    // Try to notify in the channel
+
+    // Notify the channel where spam was detected
     try {
-      await message.channel.send(`🚨 **Spam detected**: ${member.user.tag} has been automatically banned for ${spamType}.`);
+      await message.channel.send(
+        `🚨 **Auto-moderation**: <@${member.id}> has been automatically banned for **${spamType}**.\n> ${reason}`
+      );
     } catch (err) {
-      logger.error(`Could not send spam notification: ${err.message}`);
+      logger.error(`Could not send spam notification to channel: ${err.message}`);
     }
-    
-    // Ban the user
-    await member.ban({ 
-      reason: `Auto-ban: ${spamType} - ${reason}`,
-      deleteMessageSeconds: 60 * 60 * 24 // Delete messages from last 24 hours
+
+    // Execute the ban (delete last 24 h of messages)
+    await member.ban({
+      reason: `[Auto-ban] ${spamType} — ${reason}`,
+      deleteMessageSeconds: 60 * 60 * 24,
     });
-    
-    logger.info(`✅ Successfully banned ${member.user.tag} for ${spamType}`);
+
+    logger.info(`✅ Successfully banned ${member.user.tag} (${member.id}) for ${spamType}`);
+
+    // Post a detailed embed to the mod-log channel if configured
+    if (MOD_LOG_CHANNEL_ID) {
+      try {
+        const modLogChannel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
+        if (modLogChannel && modLogChannel.isTextBased()) {
+          const banEmbed = new EmbedBuilder()
+            .setTitle('🔨 Auto-Ban — Spam Detection')
+            .setColor(0xff0000)
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+            .addFields(
+              { name: '👤 User',       value: `${member.user.tag} (<@${member.id}>)`, inline: true  },
+              { name: '🆔 User ID',    value: member.id,                              inline: true  },
+              { name: '🚫 Spam Type',  value: spamType,                               inline: true  },
+              { name: '📋 Reason',     value: reason,                                 inline: false },
+              { name: '📢 Channel',    value: `<#${message.channel.id}>`,             inline: true  },
+              { name: '⏱️ Window',     value: `${SPAM_WINDOW_MS / 1000}s`,            inline: true  },
+              { name: '🕐 Detected',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+            )
+            .setFooter({ text: 'Auto-moderation system' })
+            .setTimestamp();
+
+          await modLogChannel.send({ embeds: [banEmbed] });
+        }
+      } catch (err) {
+        logger.error(`Could not post to mod-log channel: ${err.message}`);
+      }
+    }
   } catch (error) {
     logger.error(`Error handling spam detection: ${error.message}`);
   }
 }
 
-// Determine whether to process an incoming message
+// ─── Utility helpers ──────────────────────────────────────────────────────────
 function shouldProcessMessage(message) {
-  // Never respond to our own messages
   if (message.author.id === client.user?.id) {
     if (DEBUG) console.log('DEBUG: Ignoring own message');
     return false;
   }
 
-  // If author is a bot, only process when FRIENDLY_FIRE is enabled
   if (message.author.bot) {
     if (!FRIENDLY_FIRE) {
       if (DEBUG) console.log(`DEBUG: Ignoring bot message from ${message.author.tag} (FRIENDLY_FIRE off)`);
@@ -562,18 +660,145 @@ function shouldProcessMessage(message) {
   return true;
 }
 
-// Bot status updater
 function updateBotStatus() {
   const randomStatus = config.statusMessages[Math.floor(Math.random() * config.statusMessages.length)];
   client.user.setActivity(randomStatus, { type: ActivityType.Watching });
 }
 
-// Slash command handlers
+function formatUptime(ms) {
+  const hours   = Math.floor(ms / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  return `${hours}h ${minutes}m ${seconds}s`;
+}
+
+// ─── Slash command handlers ───────────────────────────────────────────────────
+
+/** /ping — latency check */
+async function handlePingSlashCommand(interaction) {
+  const sent = await interaction.reply({ content: '🏓 Pinging...', fetchReply: true });
+  const roundtrip = sent.createdTimestamp - interaction.createdTimestamp;
+  const wsLatency = client.ws.ping;
+
+  const embed = new EmbedBuilder()
+    .setTitle('🏓 Pong!')
+    .setColor(wsLatency < 100 ? 0x00ff00 : wsLatency < 250 ? 0xffff00 : 0xff0000)
+    .addFields(
+      { name: 'Roundtrip Latency', value: `${roundtrip}ms`, inline: true },
+      { name: 'WebSocket Heartbeat', value: `${wsLatency}ms`, inline: true },
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ content: '', embeds: [embed] });
+}
+
+/** /ask — direct AI question */
+async function handleAskSlashCommand(interaction) {
+  const question = interaction.options.getString('question');
+
+  await interaction.deferReply();
+
+  try {
+    const answer = await generateAMResponse(
+      question,
+      interaction.channelId,
+      interaction.guildId,
+      `slash_${interaction.id}`,
+      interaction.user.id,
+      interaction.user.username
+    );
+
+    const embed = new EmbedBuilder()
+      .setTitle('🤖 AI Response')
+      .setColor(0x5865f2)
+      .addFields(
+        { name: '❓ Question', value: question.length > 1024 ? question.slice(0, 1021) + '...' : question },
+        { name: '💬 Answer',   value: answer.length > 1024 ? answer.slice(0, 1021) + '...' : answer },
+      )
+      .setFooter({ text: `Asked by ${interaction.user.username}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Ask command error: ${error.message}`);
+    await interaction.editReply('❌ Failed to get an AI response. Please try again.');
+  }
+}
+
+/** /stats — server statistics */
+async function handleStatsSlashCommand(interaction) {
+  if (!interaction.guild) {
+    return interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
+  }
+
+  await interaction.deferReply();
+
+  try {
+    const guild = interaction.guild;
+    await guild.members.fetch(); // ensure member cache is populated
+
+    const totalMembers  = guild.memberCount;
+    const onlineMembers = guild.members.cache.filter(m => m.presence?.status !== 'offline' && m.presence?.status !== undefined).size;
+    const botCount      = guild.members.cache.filter(m => m.user.bot).size;
+    const humanCount    = totalMembers - botCount;
+    const channelCount  = guild.channels.cache.size;
+    const roleCount     = guild.roles.cache.size;
+    const emojiCount    = guild.emojis.cache.size;
+    const boostCount    = guild.premiumSubscriptionCount ?? 0;
+    const boostTier     = guild.premiumTier ?? 0;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 ${guild.name} — Server Stats`)
+      .setThumbnail(guild.iconURL({ dynamic: true }) ?? null)
+      .setColor(0x5865f2)
+      .addFields(
+        { name: '👥 Total Members', value: String(totalMembers),  inline: true },
+        { name: '🟢 Online',        value: String(onlineMembers), inline: true },
+        { name: '🤖 Bots',          value: String(botCount),      inline: true },
+        { name: '🧑 Humans',        value: String(humanCount),    inline: true },
+        { name: '📢 Channels',      value: String(channelCount),  inline: true },
+        { name: '🏷️ Roles',         value: String(roleCount),     inline: true },
+        { name: '😀 Emojis',        value: String(emojiCount),    inline: true },
+        { name: '🚀 Boosts',        value: `${boostCount} (Tier ${boostTier})`, inline: true },
+        { name: '📅 Created',       value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:R>`, inline: true },
+      )
+      .setTimestamp()
+      .setFooter({ text: `Server ID: ${guild.id}` });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Stats command error: ${error.message}`);
+    await interaction.editReply('❌ Failed to fetch server statistics.');
+  }
+}
+
+/** /help — list all commands */
+async function handleHelpSlashCommand(interaction) {
+  const embed = new EmbedBuilder()
+    .setTitle('📖 Available Commands')
+    .setColor(0x5865f2)
+    .setDescription('Here are all the slash commands you can use:')
+    .addFields(
+      { name: '🔍 `/search <query>`', value: 'Search UnionCrax for games by name.' },
+      { name: '🤖 `/ask <question>`', value: 'Ask the AI a question and get a direct response.' },
+      { name: 'ℹ️ `/info`',           value: 'Show bot information: model, mode, uptime, and database stats.' },
+      { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
+      { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
+      { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
+      { name: '📖 `/help`',           value: 'Show this help message.' },
+    )
+    .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+/** /search — UnionCrax game search */
 async function handleSearchSlashCommand(interaction) {
   const query = interaction.options.getString('query');
-  
+
   await interaction.deferReply();
-  
+
   try {
     const unionCraxResult = await searchGoogleForUnionCraxGames(query);
 
@@ -584,9 +809,9 @@ async function handleSearchSlashCommand(interaction) {
         .setColor(0x0099ff)
         .setDescription(unionCraxResult.description || 'No description available')
         .addFields(
-          { name: 'Source', value: unionCraxResult.source, inline: true },
-          { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
-          { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
+          { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
+          { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
+          { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
         )
         .setTimestamp()
         .setFooter({ text: 'Game search result from UnionCrax' });
@@ -601,11 +826,9 @@ async function handleSearchSlashCommand(interaction) {
   }
 }
 
+/** /info — bot information */
 async function handleInfoSlashCommand(interaction) {
   const uptime = Date.now() - START_TIME;
-  const hours = Math.floor(uptime / 3600000);
-  const minutes = Math.floor((uptime % 3600000) / 60000);
-  const seconds = Math.floor((uptime % 60000) / 1000);
 
   let dbStats = null;
   if (isSemanticMode && ENABLE_DATABASE) {
@@ -613,60 +836,51 @@ async function handleInfoSlashCommand(interaction) {
   }
 
   const embed = new EmbedBuilder()
-      .setTitle('UC-AIv2 Info')
-      .setColor(0x00ff00)
-      .addFields(
-          { name: 'Model', value: AI_MODEL, inline: true },
-          { name: 'Mode', value: isSemanticMode ? 'Semantic' : 'Simple', inline: true },
-          { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s`, inline: true }
-      );
+    .setTitle('🤖 UC-AIv2 Info')
+    .setColor(0x00ff00)
+    .addFields(
+      { name: '🧠 Model',   value: AI_MODEL || 'Not configured', inline: true },
+      { name: '⚙️ Mode',    value: isSemanticMode ? '🔮 Semantic' : '💬 Simple', inline: true },
+      { name: '⏱️ Uptime',  value: formatUptime(uptime), inline: true },
+      { name: '🗄️ Database', value: ENABLE_DATABASE ? '✅ Enabled' : '❌ Disabled', inline: true },
+      { name: '📣 Mentions', value: ENABLE_MENTIONS ? '✅ Enabled' : '❌ Disabled', inline: true },
+      { name: '🔍 Semantic', value: ENABLE_SEMANTIC_SEARCH ? '✅ Enabled' : '❌ Disabled', inline: true },
+    );
 
-  if (ENABLE_DATABASE) {
-    embed.addFields({ name: 'Database', value: 'Enabled', inline: true });
-    if (dbStats) {
-      embed.addFields(
-          { name: 'Total Messages', value: dbStats.total_messages, inline: true },
-          { name: 'With Embeddings', value: dbStats.messages_with_embeddings, inline: true },
-          { name: 'Channels', value: dbStats.unique_channels, inline: true }
-      );
-    }
-  } else {
-    embed.addFields({ name: 'Database', value: 'Disabled', inline: true });
+  if (dbStats) {
+    embed.addFields(
+      { name: '💬 Total Messages',  value: String(dbStats.total_messages),            inline: true },
+      { name: '🔗 With Embeddings', value: String(dbStats.messages_with_embeddings),  inline: true },
+      { name: '📢 Channels',        value: String(dbStats.unique_channels),           inline: true },
+    );
   }
 
-  embed.addFields(
-    { name: 'Mentions Enabled', value: ENABLE_MENTIONS ? 'Yes' : 'No', inline: true }
-  );
+  embed.setTimestamp().setFooter({ text: `Bot ID: ${client.user.id}` });
 
   await interaction.reply({ embeds: [embed] });
 }
 
+/** /location — runtime environment */
 async function handleLocationSlashCommand(interaction) {
   try {
-    const locationInfo = {
-      workingDirectory: process.cwd(),
-      platform: process.platform,
-      architecture: process.arch,
-      nodeVersion: process.version,
-      memoryUsage: process.memoryUsage(),
-      uptime: process.uptime(),
-      environment: process.env.NODE_ENV || 'production'
-    };
+    const mem = process.memoryUsage();
 
     const embed = new EmbedBuilder()
       .setTitle('📍 Bot Location Information')
       .setColor(0x0099ff)
       .addFields(
-        { name: 'Working Directory', value: `\`${locationInfo.workingDirectory}\``, inline: false },
-        { name: 'Platform', value: locationInfo.platform, inline: true },
-        { name: 'Architecture', value: locationInfo.architecture, inline: true },
-        { name: 'Node.js Version', value: locationInfo.nodeVersion, inline: true },
-        { name: 'Environment', value: locationInfo.environment, inline: true },
-        { name: 'Uptime', value: `${Math.floor(locationInfo.uptime / 60)} minutes`, inline: true },
-        { name: 'Memory Usage', value: `${Math.round(locationInfo.memoryUsage.heapUsed / 1024 / 1024)} MB`, inline: true }
+        { name: '📁 Working Directory', value: `\`${process.cwd()}\``,                                  inline: false },
+        { name: '🖥️ Platform',          value: process.platform,                                        inline: true  },
+        { name: '⚙️ Architecture',      value: process.arch,                                            inline: true  },
+        { name: '🟢 Node.js Version',   value: process.version,                                         inline: true  },
+        { name: '🌍 Environment',       value: process.env.NODE_ENV || 'production',                    inline: true  },
+        { name: '⏱️ Process Uptime',    value: `${Math.floor(process.uptime() / 60)} minutes`,          inline: true  },
+        { name: '💾 Heap Used',         value: `${Math.round(mem.heapUsed / 1024 / 1024)} MB`,          inline: true  },
+        { name: '💾 Heap Total',        value: `${Math.round(mem.heapTotal / 1024 / 1024)} MB`,         inline: true  },
+        { name: '📦 RSS',               value: `${Math.round(mem.rss / 1024 / 1024)} MB`,               inline: true  },
       )
       .setTimestamp()
-      .setFooter({ text: 'Bot location details' });
+      .setFooter({ text: 'Bot runtime details' });
 
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
@@ -675,10 +889,11 @@ async function handleLocationSlashCommand(interaction) {
   }
 }
 
-// Legacy command handlers (for prefix commands)
+// ─── Legacy prefix command handlers ──────────────────────────────────────────
+
 async function handleSearchCommand(message, args) {
   if (args.length === 0) {
-    return message.reply('Please provide a search query. Usage: `!search <query>` or use `/search` slash command');
+    return message.reply('Please provide a search query. Usage: `!search <query>` or use `/search`');
   }
 
   const query = args.join(' ');
@@ -696,9 +911,9 @@ async function handleSearchCommand(message, args) {
         .setColor(0x0099ff)
         .setDescription(unionCraxResult.description || 'No description available')
         .addFields(
-          { name: 'Source', value: unionCraxResult.source, inline: true },
-          { name: 'Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
-          { name: 'Size', value: unionCraxResult.size || 'N/A', inline: true }
+          { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
+          { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
+          { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
         )
         .setTimestamp()
         .setFooter({ text: 'Game search result from UnionCrax' });
@@ -713,84 +928,123 @@ async function handleSearchCommand(message, args) {
   }
 }
 
-// UnionCrax API configuration
+async function handleInfoCommand(message) {
+  const uptime = Date.now() - START_TIME;
+
+  let dbStats = null;
+  if (isSemanticMode && ENABLE_DATABASE) {
+    dbStats = await semanticContextManager.getStatistics();
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🤖 UC-AIv2 Info')
+    .setColor(0x00ff00)
+    .addFields(
+      { name: '🧠 Model',    value: AI_MODEL || 'Not configured', inline: true },
+      { name: '⚙️ Mode',     value: isSemanticMode ? '🔮 Semantic' : '💬 Simple', inline: true },
+      { name: '⏱️ Uptime',   value: formatUptime(uptime), inline: true },
+      { name: '🗄️ Database', value: ENABLE_DATABASE ? '✅ Enabled' : '❌ Disabled', inline: true },
+      { name: '📣 Mentions', value: ENABLE_MENTIONS ? '✅ Enabled' : '❌ Disabled', inline: true },
+    );
+
+  if (dbStats) {
+    embed.addFields(
+      { name: '💬 Total Messages',  value: String(dbStats.total_messages),           inline: true },
+      { name: '🔗 With Embeddings', value: String(dbStats.messages_with_embeddings), inline: true },
+      { name: '📢 Channels',        value: String(dbStats.unique_channels),          inline: true },
+    );
+  }
+
+  message.channel.send({ embeds: [embed] });
+}
+
+async function handleLocationCommand(message) {
+  try {
+    const mem = process.memoryUsage();
+
+    const embed = new EmbedBuilder()
+      .setTitle('📍 Bot Location Information')
+      .setColor(0x0099ff)
+      .addFields(
+        { name: '📁 Working Directory', value: `\`${process.cwd()}\``,                         inline: false },
+        { name: '🖥️ Platform',          value: process.platform,                               inline: true  },
+        { name: '⚙️ Architecture',      value: process.arch,                                   inline: true  },
+        { name: '🟢 Node.js Version',   value: process.version,                                inline: true  },
+        { name: '🌍 Environment',       value: process.env.NODE_ENV || 'production',           inline: true  },
+        { name: '⏱️ Process Uptime',    value: `${Math.floor(process.uptime() / 60)} minutes`, inline: true  },
+        { name: '💾 Memory Usage',      value: `${Math.round(mem.heapUsed / 1024 / 1024)} MB`, inline: true  },
+      )
+      .setTimestamp()
+      .setFooter({ text: 'Bot runtime details' });
+
+    message.channel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Location command error: ${error.message}`);
+    message.reply('❌ An error occurred while getting location information.');
+  }
+}
+
+// ─── UnionCrax search helpers ─────────────────────────────────────────────────
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
 
-// Function to search Google for games that match UnionCrax listings
+function normalizeString(str) {
+  if (!str) return '';
+  return String(str)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, '')
+    .trim();
+}
+
 async function searchGoogleForUnionCraxGames(query) {
   try {
-    // First, search UnionCrax for games matching the query
     const unionCraxGames = await searchUnionCraxGames(query);
 
-    if (unionCraxGames.length === 0) {
-      return null; // No matching games found on UnionCrax
-    }
+    if (unionCraxGames.length === 0) return null;
 
-    // Get the top matching game from UnionCrax
-    const topUnionCraxGame = unionCraxGames[0];
-
-    // Now search Google for this specific game to get the best web result
-    const googleQuery = `${topUnionCraxGame.title} site:union-crax.xyz`;
+    const topGame = unionCraxGames[0];
+    const googleQuery = `${topGame.title} site:union-crax.xyz`;
     const googleResults = await performWebSearch(googleQuery);
 
     if (googleResults.length > 0) {
-      // Combine UnionCrax data with Google search result
       return {
-        title: topUnionCraxGame.title,
-        url: topUnionCraxGame.url,
-        description: topUnionCraxGame.description,
-        source: 'UnionCrax via Google',
-        downloadCount: topUnionCraxGame.downloadCount,
-        size: topUnionCraxGame.size
+        title:         topGame.title,
+        url:           topGame.url,
+        description:   topGame.description,
+        source:        'UnionCrax via Google',
+        downloadCount: topGame.downloadCount,
+        size:          topGame.size,
       };
     }
 
-    // If no Google results, return the UnionCrax data directly
-    return topUnionCraxGame;
+    return topGame;
   } catch (error) {
     logger.error(`Google search for UnionCrax games failed: ${error.message}`);
     return null;
   }
 }
 
-// Helper function to normalize strings for comparison
-function normalizeString(str) {
-  if (!str) return '';
-  return String(str)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w\s]/g, "")
-    .trim();
-}
-
-// Function to search UnionCrax games
 async function searchUnionCraxGames(query) {
   try {
     const normalizedQuery = normalizeString(query);
 
-    // Fetch games and stats from UnionCrax API
     const [games, gameStats] = await Promise.all([
       axios.get(`${UNION_CRAX_API_BASE}/api/games`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        timeout: 10000,
       }),
       axios.get(`${UNION_CRAX_API_BASE}/api/downloads/all`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-      })
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        timeout: 10000,
+      }),
     ]);
 
     const gamesData = games.data || [];
     const statsData = gameStats.data || {};
 
-    if (!Array.isArray(gamesData) || gamesData.length === 0) {
-      return [];
-    }
+    if (!Array.isArray(gamesData) || gamesData.length === 0) return [];
 
-    // Score games based on query relevance
     const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
 
     const scoredGames = gamesData.map(game => {
@@ -798,12 +1052,10 @@ async function searchUnionCraxGames(query) {
       const normalizedDesc = normalizeString(game.description || '');
       let score = 0;
 
-      // Exact match
       if (normalizedName === normalizedQuery) score += 100;
       if (normalizedName.includes(normalizedQuery) && Math.abs(normalizedName.length - normalizedQuery.length) < 10) score += 60;
       if (normalizedQuery.includes(normalizedName) && normalizedName.length > 4) score += 40;
 
-      // Word matching
       queryWords.forEach(word => {
         if (word.length > 3) {
           if (normalizedName.includes(word)) score += 25;
@@ -812,28 +1064,24 @@ async function searchUnionCraxGames(query) {
       });
 
       if (normalizedName.startsWith(normalizedQuery)) score += 30;
-
-      // App ID match
-      if ((game.appid && String(game.appid) === normalizedQuery) || (String(game.appid) === normalizedQuery)) score += 20;
+      if ((game.appid && String(game.appid) === normalizedQuery) || String(game.appid) === normalizedQuery) score += 20;
 
       return { game, score };
     }).sort((a, b) => b.score - a.score);
 
-    // Filter high-scoring games
     const filtered = scoredGames.filter(item => item.score >= 60);
 
-    // Format results for display
     return filtered.slice(0, 3).map(item => {
-      const game = item.game;
+      const game  = item.game;
       const stats = statsData[game.appid] || statsData[game.id] || {};
 
       return {
-        title: `${game.name} - Free Download on UnionCrax`,
-        url: `${UNION_CRAX_API_BASE}/game/${encodeURIComponent(game.appid || game.id || '')}`,
-        description: game.description || 'No description available',
-        source: 'UnionCrax',
+        title:         `${game.name} - Free Download on UnionCrax`,
+        url:           `${UNION_CRAX_API_BASE}/game/${encodeURIComponent(game.appid || game.id || '')}`,
+        description:   game.description || 'No description available',
+        source:        'UnionCrax',
         downloadCount: stats.downloads || stats.download_count || stats.count || 0,
-        size: game.size || 'Unknown'
+        size:          game.size || 'Unknown',
       };
     });
   } catch (error) {
@@ -844,154 +1092,68 @@ async function searchUnionCraxGames(query) {
 
 async function performWebSearch(query) {
   try {
-    // Use web scraping to get actual search results
     const searchUrl = `${config.searchEngine}${encodeURIComponent(query)}`;
     const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 10000,
     });
 
     const $ = load(response.data);
     const results = [];
 
-    // Extract search results from Google search page
     $('div.g').each((i, element) => {
-      if (i >= 3) return; // Limit to top 3 results
+      if (i >= 3) return;
 
-      const titleElement = $(element).find('h3');
-      const urlElement = $(element).find('a');
+      const titleElement       = $(element).find('h3');
+      const urlElement         = $(element).find('a');
       const descriptionElement = $(element).find('div.VwiC3b');
 
       if (titleElement.length && urlElement.length) {
         results.push({
-          title: titleElement.text().trim(),
-          url: urlElement.attr('href'),
+          title:       titleElement.text().trim(),
+          url:         urlElement.attr('href'),
           description: descriptionElement.text().trim() || 'No description available',
-          source: 'Web Search'
+          source:      'Web Search',
         });
       }
     });
 
-    // Fallback if no results found
     if (results.length === 0) {
       results.push({
-        title: `Search results for "${query}"`,
-        url: searchUrl,
+        title:       `Search results for "${query}"`,
+        url:         searchUrl,
         description: `Find information about ${query} on the web`,
-        source: 'Web Search'
+        source:      'Web Search',
       });
     }
 
     return results;
   } catch (error) {
     logger.error(`Web search failed: ${error.message}`);
-
-    // Return fallback result if scraping fails
     return [{
-      title: `Search results for "${query}"`,
-      url: `${config.searchEngine}${encodeURIComponent(query)}`,
+      title:       `Search results for "${query}"`,
+      url:         `${config.searchEngine}${encodeURIComponent(query)}`,
       description: `Could not fetch live results. Click to search for ${query}`,
-      source: 'Web Search'
+      source:      'Web Search',
     }];
   }
 }
 
-async function handleInfoCommand(message) {
-  const uptime = Date.now() - START_TIME;
-  const hours = Math.floor(uptime / 3600000);
-  const minutes = Math.floor((uptime % 3600000) / 60000);
-  const seconds = Math.floor((uptime % 60000) / 1000);
-
-  let dbStats = null;
-  if (isSemanticMode && ENABLE_DATABASE) {
-    dbStats = await semanticContextManager.getStatistics();
-  }
-
-  const embed = new EmbedBuilder()
-      .setTitle('UC-AIv2 Info')
-      .setColor(0x00ff00)
-      .addFields(
-          { name: 'Model', value: AI_MODEL, inline: true },
-          { name: 'Mode', value: isSemanticMode ? 'Semantic' : 'Simple', inline: true },
-          { name: 'Uptime', value: `${hours}h ${minutes}m ${seconds}s`, inline: true }
-      );
-
-  if (ENABLE_DATABASE) {
-    embed.addFields({ name: 'Database', value: 'Enabled', inline: true });
-    if (dbStats) {
-      embed.addFields(
-          { name: 'Total Messages', value: dbStats.total_messages, inline: true },
-          { name: 'With Embeddings', value: dbStats.messages_with_embeddings, inline: true },
-          { name: 'Channels', value: dbStats.unique_channels, inline: true }
-      );
-    }
-  } else {
-    embed.addFields({ name: 'Database', value: 'Disabled', inline: true });
-  }
-
-  embed.addFields(
-    { name: 'Mentions Enabled', value: ENABLE_MENTIONS ? 'Yes' : 'No', inline: true }
-  );
-
-  message.channel.send({ embeds: [embed] });
-}
-
-async function handleLocationCommand(message) {
-  try {
-    const locationInfo = {
-      workingDirectory: process.cwd(),
-      platform: process.platform,
-      architecture: process.arch,
-      nodeVersion: process.version,
-      memoryUsage: process.memoryUsage(),
-      uptime: process.uptime(),
-      environment: process.env.NODE_ENV || 'production'
-    };
-
-    const embed = new EmbedBuilder()
-      .setTitle('📍 Bot Location Information')
-      .setColor(0x0099ff)
-      .addFields(
-        { name: 'Working Directory', value: `\`${locationInfo.workingDirectory}\``, inline: false },
-        { name: 'Platform', value: locationInfo.platform, inline: true },
-        { name: 'Architecture', value: locationInfo.architecture, inline: true },
-        { name: 'Node.js Version', value: locationInfo.nodeVersion, inline: true },
-        { name: 'Environment', value: locationInfo.environment, inline: true },
-        { name: 'Uptime', value: `${Math.floor(locationInfo.uptime / 60)} minutes`, inline: true },
-        { name: 'Memory Usage', value: `${Math.round(locationInfo.memoryUsage.heapUsed / 1024 / 1024)} MB`, inline: true }
-      )
-      .setTimestamp()
-      .setFooter({ text: 'Bot location details' });
-
-    message.channel.send({ embeds: [embed] });
-  } catch (error) {
-    logger.error(`Location command error: ${error.message}`);
-    message.reply('❌ An error occurred while getting location information.');
-  }
-}
-
-// Graceful shutdown handling
-process.on('SIGINT', async () => {
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+async function shutdown() {
   console.log('\n🛑 Shutting down, bye-byee...');
   if (ENABLE_DATABASE) {
     await closeDatabase();
   }
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', async () => {
-  console.log('\n🛑 Shutting down, bye-byee...');
-  if (ENABLE_DATABASE) {
-    await closeDatabase();
-  }
-  process.exit(0);
-});
+process.on('SIGINT',  shutdown);
+process.on('SIGTERM', shutdown);
 
-// Login to Discord
+// ─── Login ────────────────────────────────────────────────────────────────────
 client.login(DISCORD_TOKEN)
   .then(() => logger.info('Bot login successful'))
   .catch(error => logger.error(`Bot login failed: ${error.message}`));
 
-// Export client for testing
 export default client;
