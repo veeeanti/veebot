@@ -1,4 +1,4 @@
-﻿import {
+﻿﻿import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
@@ -18,10 +18,21 @@ class MusicManager {
   async ensureSpotifyAuthorized() {
     try {
       // play-dl uses env vars SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
-      // This will fetch an access token if missing/expired
-      if (await play.is_expired()) {
-        await play.refreshToken();
-      } else {
+      // We should check if they are actually provided first
+      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
+        throw new Error('Spotify credentials missing in environment.');
+      }
+
+      // play.is_expired() might throw if it has never been authorized
+      // We check play.spotify_is_authorized if it exists, or just try-catch play.is_expired
+      try {
+        const isExpired = await play.is_expired();
+        if (isExpired) {
+          await play.refreshToken();
+        }
+      } catch (e) {
+        // If is_expired fails, it likely means we haven't authorized yet at all
+        await play.getFreeToken(); // Some internal play-dl logic benefits from this
         await play.authorization();
       }
     } catch (e) {
@@ -57,7 +68,10 @@ class MusicManager {
           await this.ensureSpotifyAuthorized();
         } catch (authErr) {
           console.error('Spotify authorization failed:', authErr?.message || authErr);
-          return interaction.editReply('❌ Spotify authorization failed. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in your environment and restart the bot.');
+          const errorMsg = (authErr.message === 'Spotify credentials missing in environment.')
+            ? '❌ Spotify credentials (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET) are missing in the bot configuration.'
+            : `❌ Spotify authorization failed: ${authErr.message}. Please check your credentials.`;
+          return interaction.editReply(errorMsg);
         }
       }
 
