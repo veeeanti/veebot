@@ -13,47 +13,6 @@ import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 class MusicManager {
   constructor() {
     this.queues = new Map(); // guildId -> { textChannel, voiceChannel, connection, player, songs: [], volume: 5, playing: true, loop: 'none' }
-    this._spotifyConfigured = false;
-  }
-
-  async ensureSpotifyAuthorized() {
-    try {
-      const clientId = process.env.SPOTIFY_CLIENT_ID;
-      const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-
-      if (!clientId || !clientSecret || clientId.includes('your_') || clientSecret.includes('your_')) {
-        throw new Error('Spotify credentials missing in environment.');
-      }
-
-      // If we haven't configured Spotify yet in this session, do it now.
-      // Calling setToken resets the token, so we must follow it with refreshToken to get a valid access token.
-      if (!this._spotifyConfigured) {
-        await play.setToken({
-          spotify: {
-            client_id: clientId,
-            client_secret: clientSecret
-          }
-        });
-        
-        // Fetch the initial token immediately after setting credentials
-        await play.refreshToken();
-        this._spotifyConfigured = true;
-      } else {
-        // Already configured, just check if we need to refresh the existing token
-        try {
-          const isExpired = await play.is_expired('spotify');
-          if (isExpired) {
-            await play.refreshToken();
-          }
-        } catch (e) {
-          // If checking expiry fails (e.g. token missing or internal state corrupted), try a refresh anyway
-          await play.refreshToken();
-        }
-      }
-    } catch (e) {
-      // Bubble up so caller can decide how to notify users
-      throw e;
-    }
   }
 
   async handlePlay(interaction) {
@@ -77,40 +36,7 @@ class MusicManager {
       let songs = [];
       const validation = await play.validate(query);
 
-      // Ensure Spotify is authorized if we're going to work with Spotify URLs
-      if (validation && validation.startsWith('sp_')) {
-        try {
-          await this.ensureSpotifyAuthorized();
-        } catch (authErr) {
-          console.error('Spotify authorization failed:', authErr?.message || authErr);
-          const errorMsg = (authErr.message === 'Spotify credentials missing in environment.')
-            ? '❌ Spotify credentials (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET) are missing in the bot configuration.'
-            : `❌ Spotify authorization failed: ${authErr.message}. Please check your credentials.`;
-          return interaction.editReply(errorMsg);
-        }
-      }
-
-      if (validation === 'sp_track') {
-        const spData = await play.spotify(query);
-        songs.push({
-          title: spData.name,
-          url: spData.url,
-          duration: spData.durationRaw,
-          thumbnail: spData.thumbnail?.url,
-          source: 'spotify',
-        });
-      } else if (validation === 'sp_playlist' || validation === 'sp_album') {
-        const spPlaylist = await play.spotify(query);
-        const allTracks = await spPlaylist.all_tracks();
-        songs = allTracks.map(track => ({
-          title: track.name,
-          url: track.url,
-          duration: track.durationRaw,
-          thumbnail: track.thumbnail?.url,
-          source: 'spotify',
-        }));
-        await interaction.editReply(`📝 Added **${songs.length}** tracks from Spotify ${validation === 'sp_playlist' ? 'playlist' : 'album'} to the queue.`);
-      } else if (validation === 'yt_playlist') {
+      if (validation === 'yt_playlist') {
         const playlist = await play.playlist_info(query, { incomplete: true });
         const videos = await playlist.all_videos();
         songs = videos.map(video => ({
@@ -211,10 +137,7 @@ class MusicManager {
       }
     } catch (error) {
       console.error('Play command error:', error);
-      const isAuthError = error?.message && /spotify data is missing|authorization|bearer/i.test(error.message);
-      const msg = isAuthError
-        ? `❌ Spotify authorization failed: **${error.message}**. Please ensure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are correct in your .env file and restart the bot.`
-        : `❌ An error occurred while trying to play music: ${error.message}`;
+      const msg = `❌ An error occurred while trying to play music: ${error.message}`;
       interaction.editReply(msg);
     }
   }

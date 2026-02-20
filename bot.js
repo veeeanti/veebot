@@ -230,7 +230,7 @@ const commands = [
   },
   {
     name: 'play',
-    description: 'Play music from YouTube, Spotify, or SoundCloud',
+    description: 'Play music from YouTube or SoundCloud',
     options: [
       {
         name: 'query',
@@ -1076,7 +1076,7 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
-      { name: '🎵 Music Commands', value: '`/play <query>`, `/stop`, `/skip`, `/queue`, `/nowplaying`, `/pause`, `/resume`, `/volume <0-100>`, `/loop <off|song|queue>`, `/shuffle`, `/remove <index>`, `/clear`' },
+      { name: '🎵 Music Commands', value: '`/play <query>`, `/stop`, `/skip`, `/queue`, `/nowplaying`, `/pause`, `/resume`, `/volume <0-100>`, `/loop <off|song|queue>`, `/shuffle`, `/remove <index>`, `/clear` (Supports YouTube and SoundCloud)' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
