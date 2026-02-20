@@ -15,6 +15,21 @@ class MusicManager {
     this.queues = new Map(); // guildId -> { textChannel, voiceChannel, connection, player, songs: [], volume: 5, playing: true, loop: 'none' }
   }
 
+  async ensureSpotifyAuthorized() {
+    try {
+      // play-dl uses env vars SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
+      // This will fetch an access token if missing/expired
+      if (await play.is_expired()) {
+        await play.refreshToken();
+      } else {
+        await play.authorization();
+      }
+    } catch (e) {
+      // Bubble up so caller can decide how to notify users
+      throw e;
+    }
+  }
+
   async handlePlay(interaction) {
     const guildId = interaction.guildId;
     const member = interaction.member;
@@ -35,6 +50,16 @@ class MusicManager {
     try {
       let songs = [];
       const validation = await play.validate(query);
+
+      // Ensure Spotify is authorized if we're going to work with Spotify URLs
+      if (validation && validation.startsWith('sp_')) {
+        try {
+          await this.ensureSpotifyAuthorized();
+        } catch (authErr) {
+          console.error('Spotify authorization failed:', authErr?.message || authErr);
+          return interaction.editReply('❌ Spotify authorization failed. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in your environment and restart the bot.');
+        }
+      }
 
       if (validation === 'sp_track') {
         const spData = await play.spotify(query);
@@ -157,7 +182,10 @@ class MusicManager {
       }
     } catch (error) {
       console.error(error);
-      interaction.editReply('❌ An error occurred while trying to play music.');
+      const msg = (error?.message && /spotify data is missing|authorization/i.test(error.message))
+        ? '❌ Spotify authorization failed. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in your environment and restart the bot.'
+        : '❌ An error occurred while trying to play music.';
+      interaction.editReply(msg);
     }
   }
 

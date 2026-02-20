@@ -83,6 +83,27 @@ SQLITE_PATH=./database.sqlite
 - Discord bot token
 - Internet connection for web searches
 
+## Music setup
+
+The bot supports playing from YouTube, Spotify, and SoundCloud via `play-dl`.
+
+- For YouTube and SoundCloud, no extra setup is typically required.
+- For Spotify links (tracks, playlists, albums), you MUST provide Spotify API credentials so `play-dl` can authorize.
+
+Steps:
+1. Create a Spotify app at https://developer.spotify.com/dashboard
+2. Copy the Client ID and Client Secret
+3. Add the following to your `.env` (or set in your hosting provider):
+
+```
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+```
+
+4. Restart the bot.
+
+Note: The bot does not stream audio directly from Spotify; `play-dl` resolves a playable source (usually YouTube) for the requested Spotify item.
+
 ## License
 
 MIT
