@@ -64,7 +64,7 @@ export async function testConnection() {
         }
     } else {
         try {
-            const result = sqliteDb.prepare('SELECT datetime("now") as current_time').get();
+            const result = sqliteDb.prepare("SELECT datetime('now') as current_time").get();
             console.log('SQLite connected successfully (local file:', SQLITE_PATH, ')');
             return true;
         } catch (error) {
@@ -94,20 +94,30 @@ export async function initializeDatabase() {
                 client.release();
             }
         } else {
-            // Split schema by semicolon and execute each statement
-            // This is safer for some SQLite versions and ensures all tables are created
-            const statements = schema
-                .split(';')
-                .map(s => s.trim())
-                .filter(s => s.length > 0);
-            
-            for (const statement of statements) {
-                try {
-                    sqliteDb.exec(statement);
-                } catch (err) {
-                    console.error(`Failed to execute statement: ${statement.substring(0, 50)}...`);
-                    console.error(`Error: ${err.message}`);
-                    // Continue with other statements even if one fails (e.g. if table already exists and it's not IF NOT EXISTS)
+            // Execute schema as a single string for SQLite if possible
+            // but handle it carefully as better-sqlite3.exec() can handle multiple statements
+            try {
+                sqliteDb.exec(schema);
+            } catch (err) {
+                console.error(`Failed to execute full schema at once: ${err.message}`);
+                console.info('Attempting to execute statement by statement...');
+                
+                // Fallback to splitting if needed, but be aware of triggers/blocks
+                const statements = schema
+                    .split(';')
+                    .map(s => s.trim())
+                    .filter(s => s.length > 0);
+                
+                for (const statement of statements) {
+                    try {
+                        sqliteDb.exec(statement);
+                    } catch (innerErr) {
+                        // Silent fail for common errors like "table already exists"
+                        if (!innerErr.message.includes('already exists')) {
+                            console.error(`Failed to execute statement: ${statement.substring(0, 50)}...`);
+                            console.error(`Error: ${innerErr.message}`);
+                        }
+                    }
                 }
             }
         }

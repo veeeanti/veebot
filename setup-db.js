@@ -8,31 +8,25 @@ console.log('UC-AIv2 Database Setup');
 console.log('='.repeat(40));
 console.log('');
 
+const DB_TYPE = process.env.DATABASE_TYPE || 'sqlite';
+
 // Check environment configuration
-console.log('Checking configuration...');
+console.log(`Checking configuration for ${DB_TYPE.toUpperCase()}...`);
 
-const hasDirectUrl = !!process.env.DATABASE_URL;
-const hasIndividualParams = !!process.env.POSTGRES_HOST;
+if (DB_TYPE === 'postgres') {
+    const hasDirectUrl = !!process.env.DATABASE_URL;
+    const hasIndividualParams = !!process.env.POSTGRES_HOST;
 
-console.log('DATABASE_URL found:', hasDirectUrl);
-console.log('Individual parameters found:', hasIndividualParams);
+    console.log('DATABASE_URL found:', hasDirectUrl);
+    console.log('Individual parameters found:', hasIndividualParams);
 
-if (!hasDirectUrl && !hasIndividualParams) {
-    console.log('No database configuration found in .env');
-    console.log('   Please set either DATABASE_URL or individual PostgreSQL parameters');
-    console.log('   Current DATABASE_URL:', process.env.DATABASE_URL);
-    console.log('   Current POSTGRES_HOST:', process.env.POSTGRES_HOST);
-    process.exit(1);
-}
-
-if (hasDirectUrl) {
-    console.log('Found direct DATABASE_URL configuration');
-    console.log('   URL:', process.env.DATABASE_URL.substring(0, 50) + '...');
+    if (!hasDirectUrl && !hasIndividualParams) {
+        console.log('No database configuration found in .env');
+        console.log('   Please set either DATABASE_URL or individual PostgreSQL parameters');
+        process.exit(1);
+    }
 } else {
-    console.log('Found individual PostgreSQL parameters');
-    console.log('   Host:', process.env.POSTGRES_HOST);
-    console.log('   Database:', process.env.POSTGRES_DB);
-    console.log('   User:', process.env.POSTGRES_USER);
+    console.log('SQLite Path:', process.env.SQLITE_PATH || './database.sqlite');
 }
 console.log('');
 
@@ -45,8 +39,12 @@ try {
         console.log('');
     } else {
         console.log('Database connection failed');
-        console.log('   Please check your DATABASE_URL or connection parameters');
-        console.log('   Ensure PostgreSQL server is accessible and credentials are correct');
+        if (DB_TYPE === 'postgres') {
+            console.log('   Please check your DATABASE_URL or connection parameters');
+            console.log('   Ensure PostgreSQL server is accessible and credentials are correct');
+        } else {
+            console.log('   Please ensure better-sqlite3 is correctly installed and the path is writable.');
+        }
         console.log('');
         process.exit(1);
     }
@@ -65,7 +63,8 @@ try {
         console.log('');
     } else {
         console.log('Database schema initialization failed');
-        console.log('   Check that schema.sql file exists and database permissions are correct');
+        const schemaFile = DB_TYPE === 'postgres' ? 'schema.sql' : 'schema-sqlite.sql';
+        console.log(`   Check that ${schemaFile} file exists and database permissions are correct`);
         console.log('');
         process.exit(1);
     }
