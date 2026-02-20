@@ -129,12 +129,12 @@ const commands = [
     options: [
       {
         name: 'set',
-        description: 'Set your birthday',
+        description: 'Set your birthday or a user\'s birthday (Admins/Mods only)',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'month',
-            description: 'The month of your birthday (1-12)',
+            description: 'The month of the birthday (1-12)',
             type: 4, // INTEGER
             required: true,
             min_value: 1,
@@ -142,7 +142,7 @@ const commands = [
           },
           {
             name: 'day',
-            description: 'The day of your birthday (1-31)',
+            description: 'The day of the birthday (1-31)',
             type: 4, // INTEGER
             required: true,
             min_value: 1,
@@ -150,23 +150,45 @@ const commands = [
           },
           {
             name: 'year',
-            description: 'The year of your birthday (optional)',
+            description: 'The year of the birthday (optional)',
             type: 4, // INTEGER
             required: false,
             min_value: 1900,
             max_value: new Date().getFullYear(),
           },
+          {
+            name: 'user',
+            description: 'The user to set the birthday for (Admins/Mods only)',
+            type: 6, // USER
+            required: false,
+          },
         ],
       },
       {
         name: 'remove',
-        description: 'Remove your birthday',
+        description: 'Remove your birthday or a user\'s birthday (Admins/Mods only)',
         type: 1, // SUB_COMMAND
+        options: [
+          {
+            name: 'user',
+            description: 'The user to remove the birthday for (Admins/Mods only)',
+            type: 6, // USER
+            required: false,
+          },
+        ],
       },
       {
         name: 'get',
-        description: 'See your stored birthday',
+        description: 'See your stored birthday or a user\'s birthday (Admins/Mods only)',
         type: 1, // SUB_COMMAND
+        options: [
+          {
+            name: 'user',
+            description: 'The user to see the birthday for (Admins/Mods only)',
+            type: 6, // USER
+            required: false,
+          },
+        ],
       },
     ],
     integration_types: [0, 1],
@@ -902,8 +924,8 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
       { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
-      { name: '🎂 `/birthday set <month> <day> [year]`', value: 'Set your birthday to get a shoutout!' },
-      { name: '🎂 `/birthday get` / `remove`', value: 'View or remove your stored birthday.' },
+      { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
+      { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
@@ -1011,6 +1033,24 @@ async function handleLocationSlashCommand(interaction) {
 /** /birthday — manage birthdays */
 async function handleBirthdaySlashCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
+  const targetUser = interaction.options.getUser('user') || interaction.user;
+  const isSelf = targetUser.id === interaction.user.id;
+
+  // Permission check: only admins and moderators can manage other users' birthdays
+  if (!isSelf) {
+    const member = interaction.member;
+    const canManageOthers = member && (
+      member.permissions.has(PermissionFlagsBits.Administrator) ||
+      member.permissions.has(PermissionFlagsBits.ModerateMembers)
+    );
+
+    if (!canManageOthers) {
+      return interaction.reply({
+        content: '❌ You don\'t have permission to manage birthdays for other users. Only Administrators and Moderators can do that.',
+        flags: [MessageFlags.Ephemeral]
+      });
+    }
+  }
 
   if (subcommand === 'set') {
     const month = interaction.options.getInteger('month');
@@ -1029,33 +1069,40 @@ async function handleBirthdaySlashCommand(interaction) {
       return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).', flags: [MessageFlags.Ephemeral] });
     }
 
-    const success = await setBirthday(interaction.user.id, interaction.user.username, day, month, year);
+    const success = await setBirthday(targetUser.id, targetUser.username, day, month, year);
     if (success) {
       const yearStr = year ? `, ${year}` : '';
-      await interaction.reply({ content: `✅ Your birthday has been set to **${month}/${day}${yearStr}**! I'll ping you when the day comes.`, flags: [MessageFlags.Ephemeral] });
+      const userStr = isSelf ? 'Your' : `<@${targetUser.id}>'s`;
+      await interaction.reply({
+        content: `✅ ${userStr} birthday has been set to **${month}/${day}${yearStr}**!`,
+        flags: [MessageFlags.Ephemeral]
+      });
     } else {
-      await interaction.reply({ content: '❌ Failed to save your birthday. Please try again later.', flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: '❌ Failed to save the birthday. Please try again later.', flags: [MessageFlags.Ephemeral] });
     }
   } else if (subcommand === 'remove') {
     if (!ENABLE_DATABASE) {
       return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
     }
-    const success = await removeBirthday(interaction.user.id);
+    const success = await removeBirthday(targetUser.id);
     if (success) {
-      await interaction.reply({ content: '✅ Your birthday has been removed from our records.', flags: [MessageFlags.Ephemeral] });
+      const userStr = isSelf ? 'Your' : `<@${targetUser.id}>'s`;
+      await interaction.reply({ content: `✅ ${userStr} birthday has been removed from our records.`, flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: '❌ Failed to remove your birthday.', flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: '❌ Failed to remove the birthday.', flags: [MessageFlags.Ephemeral] });
     }
   } else if (subcommand === 'get') {
     if (!ENABLE_DATABASE) {
       return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
     }
-    const birthday = await getBirthday(interaction.user.id);
+    const birthday = await getBirthday(targetUser.id);
     if (birthday) {
       const yearStr = birthday.year ? `/${birthday.year}` : '';
-      await interaction.reply({ content: `🎂 Your stored birthday is **${birthday.month}/${birthday.day}${yearStr}**.`, flags: [MessageFlags.Ephemeral] });
+      const userStr = isSelf ? 'Your stored birthday is' : `<@${targetUser.id}>'s birthday is`;
+      await interaction.reply({ content: `🎂 ${userStr} **${birthday.month}/${birthday.day}${yearStr}**.`, flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: '❌ You haven\'t set your birthday yet! Use `/birthday set` to do so.', flags: [MessageFlags.Ephemeral] });
+      const userStr = isSelf ? 'You haven\'t set your birthday yet! Use `/birthday set` to do so.' : `<@${targetUser.id}> hasn't set their birthday yet.`;
+      await interaction.reply({ content: `❌ ${userStr}`, flags: [MessageFlags.Ephemeral] });
     }
   }
 }
