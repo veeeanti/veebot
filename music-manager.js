@@ -17,22 +17,33 @@ class MusicManager {
 
   async ensureSpotifyAuthorized() {
     try {
-      // play-dl uses env vars SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
-      // We should check if they are actually provided first
-      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
+      const clientId = process.env.SPOTIFY_CLIENT_ID;
+      const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret || clientId.includes('your_') || clientSecret.includes('your_')) {
         throw new Error('Spotify credentials missing in environment.');
       }
 
-      // play.is_expired() might throw if it has never been authorized
-      // We check play.spotify_is_authorized if it exists, or just try-catch play.is_expired
+      // Explicitly set the credentials in play-dl. 
+      // This ensures play-dl uses the latest env vars and initializes its internal Spotify state.
+      await play.setToken({
+        spotify: {
+          client_id: clientId,
+          client_secret: clientSecret
+        }
+      });
+
+      // Ensure a valid token is fetched/refreshed. 
+      // is_expired('spotify') can throw if no token has ever been fetched.
       try {
-        const isExpired = await play.is_expired();
+        const isExpired = await play.is_expired('spotify');
         if (isExpired) {
           await play.refreshToken();
         }
       } catch (e) {
-        // If is_expired fails, it likely means we haven't authorized yet at all
-        await play.authorization();
+        // If it throws or is not initialized, we attempt to refresh/fetch the token.
+        // This is safe to call after setToken with valid credentials.
+        await play.refreshToken();
       }
     } catch (e) {
       // Bubble up so caller can decide how to notify users
@@ -194,10 +205,11 @@ class MusicManager {
         }
       }
     } catch (error) {
-      console.error(error);
-      const msg = (error?.message && /spotify data is missing|authorization/i.test(error.message))
-        ? '❌ Spotify authorization failed. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in your environment and restart the bot.'
-        : '❌ An error occurred while trying to play music.';
+      console.error('Play command error:', error);
+      const isAuthError = error?.message && /spotify data is missing|authorization/i.test(error.message);
+      const msg = isAuthError
+        ? `❌ Spotify authorization failed: **${error.message}**. Please ensure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are correct in your .env file and restart the bot.`
+        : `❌ An error occurred while trying to play music: ${error.message}`;
       interaction.editReply(msg);
     }
   }
