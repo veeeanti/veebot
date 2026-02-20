@@ -28,6 +28,7 @@ import {
 } from './database.js';
 import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
+import musicManager from './music-manager.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 const DISCORD_TOKEN          = process.env.DISCORD_TOKEN;
@@ -95,6 +96,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -224,6 +226,118 @@ const commands = [
     name: 'stats',
     description: 'Show server statistics',
     integration_types: [0], // Guild only
+    contexts: [0],
+  },
+  {
+    name: 'play',
+    description: 'Play music from YouTube, Spotify, or SoundCloud',
+    options: [
+      {
+        name: 'query',
+        description: 'The song name or URL',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'stop',
+    description: 'Stop the music and clear the queue',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'skip',
+    description: 'Skip the current song',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'queue',
+    description: 'Show the current music queue',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'nowplaying',
+    description: 'Show what is currently playing',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'pause',
+    description: 'Pause the current song',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'resume',
+    description: 'Resume the current song',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'volume',
+    description: 'Change the music volume',
+    options: [
+      {
+        name: 'volume',
+        description: 'Volume level (0-100)',
+        type: 4, // INTEGER
+        required: true,
+        min_value: 0,
+        max_value: 100,
+      },
+    ],
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'loop',
+    description: 'Set the loop mode',
+    options: [
+      {
+        name: 'mode',
+        description: 'Loop mode',
+        type: 3, // STRING
+        required: true,
+        choices: [
+          { name: 'Off', value: 'none' },
+          { name: 'Song', value: 'song' },
+          { name: 'Queue', value: 'queue' },
+        ],
+      },
+    ],
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'shuffle',
+    description: 'Shuffle the music queue',
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'remove',
+    description: 'Remove a song from the queue',
+    options: [
+      {
+        name: 'index',
+        description: 'The index of the song to remove',
+        type: 4, // INTEGER
+        required: true,
+        min_value: 1,
+      },
+    ],
+    integration_types: [0],
+    contexts: [0],
+  },
+  {
+    name: 'clear',
+    description: 'Clear the music queue',
+    integration_types: [0],
     contexts: [0],
   },
   {
@@ -474,6 +588,42 @@ client.on('interactionCreate', async (interaction) => {
         break;
       case 'birthday':
         await handleBirthdaySlashCommand(interaction);
+        break;
+      case 'play':
+        await musicManager.handlePlay(interaction);
+        break;
+      case 'stop':
+        await musicManager.handleStop(interaction);
+        break;
+      case 'skip':
+        await musicManager.handleSkip(interaction);
+        break;
+      case 'queue':
+        await musicManager.handleQueue(interaction);
+        break;
+      case 'nowplaying':
+        await musicManager.handleNowPlaying(interaction);
+        break;
+      case 'pause':
+        await musicManager.handlePause(interaction);
+        break;
+      case 'resume':
+        await musicManager.handleResume(interaction);
+        break;
+      case 'volume':
+        await musicManager.handleVolume(interaction);
+        break;
+      case 'loop':
+        await musicManager.handleLoop(interaction);
+        break;
+      case 'shuffle':
+        await musicManager.handleShuffle(interaction);
+        break;
+      case 'remove':
+        await musicManager.handleRemove(interaction);
+        break;
+      case 'clear':
+        await musicManager.handleClear(interaction);
         break;
       default:
         await interaction.reply({ content: '❓ Unknown command.', flags: [MessageFlags.Ephemeral] });
@@ -926,6 +1076,7 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
+      { name: '🎵 Music Commands', value: '`/play <query>`, `/stop`, `/skip`, `/queue`, `/nowplaying`, `/pause`, `/resume`, `/volume <0-100>`, `/loop <off|song|queue>`, `/shuffle`, `/remove <index>`, `/clear`' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
