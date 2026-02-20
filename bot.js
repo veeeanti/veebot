@@ -15,7 +15,16 @@ import { load } from 'cheerio';
 import winston from 'winston';
 
 // Import helper modules
-import { testConnection, initializeDatabase, closeDatabase } from './database.js';
+import { 
+  testConnection, 
+  initializeDatabase, 
+  closeDatabase,
+  setBirthday,
+  getBirthday,
+  removeBirthday,
+  getTodaysBirthdays,
+  markBirthdayAsPinged
+} from './database.js';
 import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
 
@@ -32,6 +41,7 @@ const DEBUG                  = process.env.DEBUG === 'true';
 const ENABLE_MENTIONS        = process.env.ENABLE_MENTIONS === 'true';
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
 const ENABLE_DATABASE        = process.env.ENABLE_DATABASE === 'true';
+const DATABASE_TYPE          = process.env.DATABASE_TYPE || 'sqlite';
 const DATABASE_URL           = process.env.DATABASE_URL;
 const FRIENDLY_FIRE          = process.env.FRIENDLY_FIRE === 'true';
 const SPAM_DETECTION_ENABLED = process.env.SPAM_DETECTION_ENABLED !== 'false'; // default ON
@@ -109,6 +119,55 @@ const commands = [
   {
     name: 'info',
     description: 'Get information about the bot',
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+  },
+  {
+    name: 'birthday',
+    description: 'Manage your birthday',
+    options: [
+      {
+        name: 'set',
+        description: 'Set your birthday',
+        type: 1, // SUB_COMMAND
+        options: [
+          {
+            name: 'month',
+            description: 'The month of your birthday (1-12)',
+            type: 4, // INTEGER
+            required: true,
+            min_value: 1,
+            max_value: 12,
+          },
+          {
+            name: 'day',
+            description: 'The day of your birthday (1-31)',
+            type: 4, // INTEGER
+            required: true,
+            min_value: 1,
+            max_value: 31,
+          },
+          {
+            name: 'year',
+            description: 'The year of your birthday (optional)',
+            type: 4, // INTEGER
+            required: false,
+            min_value: 1900,
+            max_value: new Date().getFullYear(),
+          },
+        ],
+      },
+      {
+        name: 'remove',
+        description: 'Remove your birthday',
+        type: 1, // SUB_COMMAND
+      },
+      {
+        name: 'get',
+        description: 'See your stored birthday',
+        type: 1, // SUB_COMMAND
+      },
+    ],
     integration_types: [0, 1],
     contexts: [0, 1, 2],
   },
@@ -307,12 +366,13 @@ async function initializeSystem() {
 
   if (isSemanticMode) {
     console.log('✅ Semantic Context Mode ENABLED');
-    console.log('   - Using PostgreSQL for message storage');
+    console.log(`   - Using ${DATABASE_TYPE.toUpperCase()} for message storage`);
+    if (DATABASE_TYPE === 'sqlite') console.log(`   - Storage path: ${process.env.SQLITE_PATH || './database.sqlite'}`);
     console.log('   - Using text-based similarity for semantic search');
     console.log('   - Context-aware responses based on message similarity');
   } else if (ENABLE_DATABASE) {
     console.log('ℹ️  Simple Mode ENABLED (no semantic context)');
-    console.log('   - Using basic conversation memory');
+    console.log(`   - Using ${DATABASE_TYPE.toUpperCase()} for basic storage`);
   } else {
     console.log('ℹ️  Simple Mode ENABLED (no database)');
     console.log('   - No conversation memory');
@@ -345,6 +405,10 @@ client.once('ready', async () => {
     }
     if (DEBUG) console.log(`DEBUG: Spam tracking map size after cleanup: ${userSpamTracking.size}`);
   }, 60000); // run every minute
+
+  // Check for birthdays once an hour
+  checkBirthdays();
+  setInterval(checkBirthdays, 3600000);
 });
 
 // ─── Interaction handler ──────────────────────────────────────────────────────
@@ -375,6 +439,9 @@ client.on('interactionCreate', async (interaction) => {
         break;
       case 'help':
         await handleHelpSlashCommand(interaction);
+        break;
+      case 'birthday':
+        await handleBirthdaySlashCommand(interaction);
         break;
       default:
         await interaction.reply({ content: '❓ Unknown command.', ephemeral: true });
@@ -428,17 +495,16 @@ client.on('messageCreate', async (message) => {
   // AI Response Handling
   const isCorrectChannel = message.channel.id === CHANNEL_ID;
   const isMentioned = message.mentions.has(client.user);
-  const isInMainGuild = message.guild && message.guild.id === GUILD_ID;
-
+  
   const currentTime = Date.now();
   let shouldRespond = false;
 
-  if (ENABLE_MENTIONS && isMentioned && isInMainGuild) {
+  if (isMentioned) {
+    // Respond to pings in ANY server
     shouldRespond = true;
   } else if (isCorrectChannel) {
-    if (isMentioned) {
-      shouldRespond = true;
-    } else if (Math.random() < RANDOM_RESPONSE_CHANCE && currentTime - lastResponseTime > 10000) {
+    // Respond randomly in the designated channel
+    if (Math.random() < RANDOM_RESPONSE_CHANCE && currentTime - lastResponseTime > 10000) {
       shouldRespond = true;
       lastResponseTime = currentTime;
     }
@@ -665,6 +731,39 @@ function updateBotStatus() {
   client.user.setActivity(randomStatus, { type: ActivityType.Watching });
 }
 
+async function checkBirthdays() {
+  if (!ENABLE_DATABASE) return;
+
+  const now = new Date();
+  const day = now.getDate();
+  const month = now.getMonth() + 1; // getMonth is 0-indexed
+  const year = now.getFullYear();
+
+  try {
+    const birthdays = await getTodaysBirthdays(day, month, year);
+    if (birthdays.length === 0) return;
+
+    // Use the configured CHANNEL_ID if available, or try to find a suitable channel
+    const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+    if (!channel) {
+      logger.warn(`Could not find channel ${CHANNEL_ID} for birthday announcements.`);
+      return;
+    }
+
+    for (const bday of birthdays) {
+      try {
+        const ageStr = bday.year ? ` (turning ${year - bday.year})` : '';
+        await channel.send(`🎂 **Happy Birthday <@${bday.user_id}>!** Hope you have an amazing day! 🎉${ageStr}`);
+        await markBirthdayAsPinged(bday.user_id, year);
+      } catch (err) {
+        logger.error(`Failed to send birthday message for ${bday.user_id}: ${err.message}`);
+      }
+    }
+  } catch (error) {
+    logger.error(`Error in checkBirthdays: ${error.message}`);
+  }
+}
+
 function formatUptime(ms) {
   const hours   = Math.floor(ms / 3600000);
   const minutes = Math.floor((ms % 3600000) / 60000);
@@ -785,6 +884,8 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
       { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
+      { name: '🎂 `/birthday set <month> <day> [year]`', value: 'Set your birthday to get a shoutout!' },
+      { name: '🎂 `/birthday get` / `remove`', value: 'View or remove your stored birthday.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
@@ -842,7 +943,7 @@ async function handleInfoSlashCommand(interaction) {
       { name: '🧠 Model',   value: AI_MODEL || 'Not configured', inline: true },
       { name: '⚙️ Mode',    value: isSemanticMode ? '🔮 Semantic' : '💬 Simple', inline: true },
       { name: '⏱️ Uptime',  value: formatUptime(uptime), inline: true },
-      { name: '🗄️ Database', value: ENABLE_DATABASE ? '✅ Enabled' : '❌ Disabled', inline: true },
+      { name: '🗄️ Database', value: ENABLE_DATABASE ? `✅ Enabled (${DATABASE_TYPE})` : '❌ Disabled', inline: true },
       { name: '📣 Mentions', value: ENABLE_MENTIONS ? '✅ Enabled' : '❌ Disabled', inline: true },
       { name: '🔍 Semantic', value: ENABLE_SEMANTIC_SEARCH ? '✅ Enabled' : '❌ Disabled', inline: true },
     );
@@ -886,6 +987,45 @@ async function handleLocationSlashCommand(interaction) {
   } catch (error) {
     logger.error(`Location command error: ${error.message}`);
     await interaction.reply({ content: '❌ An error occurred while getting location information.', ephemeral: true });
+  }
+}
+
+/** /birthday — manage birthdays */
+async function handleBirthdaySlashCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+
+  if (subcommand === 'set') {
+    const month = interaction.options.getInteger('month');
+    const day = interaction.options.getInteger('day');
+    const year = interaction.options.getInteger('year');
+
+    // Basic date validation
+    if (day > 31 || (month === 2 && day > 29)) {
+      return interaction.reply({ content: '❌ That doesn\'t look like a valid date.', ephemeral: true });
+    }
+
+    const success = await setBirthday(interaction.user.id, interaction.user.username, day, month, year);
+    if (success) {
+      const yearStr = year ? `, ${year}` : '';
+      await interaction.reply({ content: `✅ Your birthday has been set to **${month}/${day}${yearStr}**! I'll ping you when the day comes.`, ephemeral: true });
+    } else {
+      await interaction.reply({ content: '❌ Failed to save your birthday. Please try again later.', ephemeral: true });
+    }
+  } else if (subcommand === 'remove') {
+    const success = await removeBirthday(interaction.user.id);
+    if (success) {
+      await interaction.reply({ content: '✅ Your birthday has been removed from our records.', ephemeral: true });
+    } else {
+      await interaction.reply({ content: '❌ Failed to remove your birthday.', ephemeral: true });
+    }
+  } else if (subcommand === 'get') {
+    const birthday = await getBirthday(interaction.user.id);
+    if (birthday) {
+      const yearStr = birthday.year ? `/${birthday.year}` : '';
+      await interaction.reply({ content: `🎂 Your stored birthday is **${birthday.month}/${birthday.day}${yearStr}**.`, ephemeral: true });
+    } else {
+      await interaction.reply({ content: '❌ You haven\'t set your birthday yet! Use `/birthday set` to do so.', ephemeral: true });
+    }
   }
 }
 

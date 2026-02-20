@@ -38,3 +38,22 @@ CREATE TRIGGER update_messages_updated_at
     BEFORE UPDATE ON messages
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Birthdays table
+CREATE TABLE IF NOT EXISTS birthdays (
+    user_id VARCHAR(255) PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    day INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    year INTEGER,
+    last_pinged_year INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Trigger for birthdays
+DROP TRIGGER IF EXISTS update_birthdays_updated_at ON birthdays;
+CREATE TRIGGER update_birthdays_updated_at
+    BEFORE UPDATE ON birthdays
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();

@@ -9,6 +9,7 @@ A multifunctional Discord bot that can search the web, provide keyword-based hel
 - **Command System**: Easy-to-use command interface
 - **Dynamic Bot Status**: Rotating status messages showing bot activity
 - **Logging**: Comprehensive logging for debugging and monitoring
+- **Database**: Supports local file-based storage (SQLite) or remote servers (PostgreSQL)
 - **Configurable**: Customizable through environment variables
 - **Error Handling**: Graceful error handling with user-friendly messages
 
@@ -62,6 +63,12 @@ DISCORD_TOKEN=your_discord_bot_token_here
 BOT_PREFIX=!
 SEARCH_ENGINE=https://www.google.com/search?q=
 LOG_LEVEL=info
+
+# Database Configuration
+ENABLE_DATABASE=true
+DATABASE_TYPE=sqlite      # Use 'sqlite' for local or 'postgres' for remote
+SQLITE_PATH=./database.sqlite
+# DATABASE_URL=postgres://user:pass@host:5432/db (only for postgres)
 ```
 
 ## Development
