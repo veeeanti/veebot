@@ -626,15 +626,15 @@ client.on('interactionCreate', async (interaction) => {
         await musicManager.handleClear(interaction);
         break;
       default:
-        await interaction.reply({ content: '❓ Unknown command.', flags: [MessageFlags.Ephemeral] });
+        await interaction.reply({ content: '❓ Unknown command.' });
     }
   } catch (error) {
     logger.error(`Error handling slash command "${commandName}": ${error.message}`);
     const errorMessage = '❌ An error occurred while processing your command.';
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
+      await interaction.followUp({ content: errorMessage });
     } else {
-      await interaction.reply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: errorMessage });
     }
   }
 });
@@ -1017,7 +1017,7 @@ async function handleAskSlashCommand(interaction) {
 /** /stats — server statistics */
 async function handleStatsSlashCommand(interaction) {
   if (!interaction.guild) {
-    return interaction.reply({ content: '❌ This command can only be used in a server.', flags: [MessageFlags.Ephemeral] });
+    return interaction.reply({ content: '❌ This command can only be used in a server.' });
   }
 
   await interaction.deferReply();
@@ -1177,7 +1177,7 @@ async function handleLocationSlashCommand(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     logger.error(`Location command error: ${error.message}`);
-    await interaction.reply({ content: '❌ An error occurred while getting location information.', flags: [MessageFlags.Ephemeral] });
+    await interaction.reply({ content: '❌ An error occurred while getting location information.' });
   }
 }
 
@@ -1197,8 +1197,7 @@ async function handleBirthdaySlashCommand(interaction) {
 
     if (!canManageOthers) {
       return interaction.reply({
-        content: '❌ You don\'t have permission to manage birthdays for other users. Only Administrators and Moderators can do that.',
-        flags: [MessageFlags.Ephemeral]
+        content: '❌ You don\'t have permission to manage birthdays for other users. Only Administrators and Moderators can do that.'
       });
     }
   }
@@ -1213,11 +1212,11 @@ async function handleBirthdaySlashCommand(interaction) {
     const daysInMonth = new Date(year || currentYear, month, 0).getDate();
 
     if (day > daysInMonth) {
-      return interaction.reply({ content: `❌ That doesn't look like a valid date for month ${month}.`, flags: [MessageFlags.Ephemeral] });
+      return interaction.reply({ content: `❌ That doesn't look like a valid date for month ${month}.` });
     }
 
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).', flags: [MessageFlags.Ephemeral] });
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
     }
 
     const success = await setBirthday(targetUser.id, targetUser.username, day, month, year);
@@ -1225,35 +1224,34 @@ async function handleBirthdaySlashCommand(interaction) {
       const yearStr = year ? `, ${year}` : '';
       const userStr = isSelf ? 'Your' : `<@${targetUser.id}>'s`;
       await interaction.reply({
-        content: `✅ ${userStr} birthday has been set to **${month}/${day}${yearStr}**!`,
-        flags: [MessageFlags.Ephemeral]
+        content: `✅ ${userStr} birthday has been set to **${month}/${day}${yearStr}**!`
       });
     } else {
-      await interaction.reply({ content: '❌ Failed to save the birthday. Please try again later.', flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: '❌ Failed to save the birthday. Please try again later.' });
     }
   } else if (subcommand === 'remove') {
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.' });
     }
     const success = await removeBirthday(targetUser.id);
     if (success) {
       const userStr = isSelf ? 'Your' : `<@${targetUser.id}>'s`;
-      await interaction.reply({ content: `✅ ${userStr} birthday has been removed from our records.`, flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: `✅ ${userStr} birthday has been removed from our records.` });
     } else {
-      await interaction.reply({ content: '❌ Failed to remove the birthday.', flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: '❌ Failed to remove the birthday.' });
     }
   } else if (subcommand === 'get') {
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.' });
     }
     const birthday = await getBirthday(targetUser.id);
     if (birthday) {
       const yearStr = birthday.year ? `/${birthday.year}` : '';
       const userStr = isSelf ? 'Your stored birthday is' : `<@${targetUser.id}>'s birthday is`;
-      await interaction.reply({ content: `🎂 ${userStr} **${birthday.month}/${birthday.day}${yearStr}**.`, flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: `🎂 ${userStr} **${birthday.month}/${birthday.day}${yearStr}**.` });
     } else {
       const userStr = isSelf ? 'You haven\'t set your birthday yet! Use `/birthday set` to do so.' : `<@${targetUser.id}> hasn't set their birthday yet.`;
-      await interaction.reply({ content: `❌ ${userStr}`, flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: `❌ ${userStr}` });
     }
   }
 }
