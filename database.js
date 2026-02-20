@@ -78,14 +78,38 @@ export async function initializeDatabase() {
     try {
         const schemaFileName = DB_TYPE === 'postgres' ? 'schema.sql' : 'schema-sqlite.sql';
         const schemaPath = path.join(process.cwd(), schemaFileName);
+        
+        if (!fs.existsSync(schemaPath)) {
+            console.error(`Schema file not found: ${schemaPath}`);
+            return false;
+        }
+        
         const schema = fs.readFileSync(schemaPath, 'utf8');
 
         if (DB_TYPE === 'postgres') {
             const client = await pgPool.connect();
-            await client.query(schema);
-            client.release();
+            try {
+                await client.query(schema);
+            } finally {
+                client.release();
+            }
         } else {
-            sqliteDb.exec(schema);
+            // Split schema by semicolon and execute each statement
+            // This is safer for some SQLite versions and ensures all tables are created
+            const statements = schema
+                .split(';')
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+            
+            for (const statement of statements) {
+                try {
+                    sqliteDb.exec(statement);
+                } catch (err) {
+                    console.error(`Failed to execute statement: ${statement.substring(0, 50)}...`);
+                    console.error(`Error: ${err.message}`);
+                    // Continue with other statements even if one fails (e.g. if table already exists and it's not IF NOT EXISTS)
+                }
+            }
         }
         console.log(`Database schema (${DB_TYPE}) initialized successfully`);
         return true;

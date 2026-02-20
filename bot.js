@@ -9,6 +9,7 @@ import {
   REST,
   Routes,
   PermissionFlagsBits,
+  MessageFlags,
 } from 'discord.js';
 import axios from 'axios';
 import { load } from 'cheerio';
@@ -362,6 +363,13 @@ async function initializeSystem() {
         }
       }
     }
+  } else {
+    // Basic database initialization for non-semantic features like birthdays
+    const dbConnected = await testConnection();
+    if (dbConnected) {
+      await initializeDatabase();
+      console.log('✅ Database initialized for basic features (Birthdays, etc.)');
+    }
   }
 
   if (isSemanticMode) {
@@ -407,8 +415,10 @@ client.once('ready', async () => {
   }, 60000); // run every minute
 
   // Check for birthdays once an hour
-  checkBirthdays();
-  setInterval(checkBirthdays, 3600000);
+  if (ENABLE_DATABASE) {
+    checkBirthdays();
+    setInterval(checkBirthdays, 3600000);
+  }
 });
 
 // ─── Interaction handler ──────────────────────────────────────────────────────
@@ -444,15 +454,15 @@ client.on('interactionCreate', async (interaction) => {
         await handleBirthdaySlashCommand(interaction);
         break;
       default:
-        await interaction.reply({ content: '❓ Unknown command.', ephemeral: true });
+        await interaction.reply({ content: '❓ Unknown command.', flags: [MessageFlags.Ephemeral] });
     }
   } catch (error) {
     logger.error(`Error handling slash command "${commandName}": ${error.message}`);
     const errorMessage = '❌ An error occurred while processing your command.';
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: errorMessage, ephemeral: true });
+      await interaction.followUp({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: errorMessage, ephemeral: true });
+      await interaction.reply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
     }
   }
 });
@@ -743,7 +753,12 @@ async function checkBirthdays() {
     const birthdays = await getTodaysBirthdays(day, month, year);
     if (birthdays.length === 0) return;
 
-    // Use the configured CHANNEL_ID if available, or try to find a suitable channel
+    // Use the configured CHANNEL_ID if available
+    if (!CHANNEL_ID) {
+      logger.warn('CHANNEL_ID not configured. Skipping birthday announcements.');
+      return;
+    }
+
     const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
     if (!channel) {
       logger.warn(`Could not find channel ${CHANNEL_ID} for birthday announcements.`);
@@ -754,7 +769,10 @@ async function checkBirthdays() {
       try {
         const ageStr = bday.year ? ` (turning ${year - bday.year})` : '';
         await channel.send(`🎂 **Happy Birthday <@${bday.user_id}>!** Hope you have an amazing day! 🎉${ageStr}`);
+        
+        // Mark as pinged for this year
         await markBirthdayAsPinged(bday.user_id, year);
+        logger.info(`Birthday pinged for ${bday.user_id}`);
       } catch (err) {
         logger.error(`Failed to send birthday message for ${bday.user_id}: ${err.message}`);
       }
@@ -827,7 +845,7 @@ async function handleAskSlashCommand(interaction) {
 /** /stats — server statistics */
 async function handleStatsSlashCommand(interaction) {
   if (!interaction.guild) {
-    return interaction.reply({ content: '❌ This command can only be used in a server.', ephemeral: true });
+    return interaction.reply({ content: '❌ This command can only be used in a server.', flags: [MessageFlags.Ephemeral] });
   }
 
   await interaction.deferReply();
@@ -986,7 +1004,7 @@ async function handleLocationSlashCommand(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     logger.error(`Location command error: ${error.message}`);
-    await interaction.reply({ content: '❌ An error occurred while getting location information.', ephemeral: true });
+    await interaction.reply({ content: '❌ An error occurred while getting location information.', flags: [MessageFlags.Ephemeral] });
   }
 }
 
@@ -1000,31 +1018,44 @@ async function handleBirthdaySlashCommand(interaction) {
     const year = interaction.options.getInteger('year');
 
     // Basic date validation
-    if (day > 31 || (month === 2 && day > 29)) {
-      return interaction.reply({ content: '❌ That doesn\'t look like a valid date.', ephemeral: true });
+    const currentYear = new Date().getFullYear();
+    const daysInMonth = new Date(year || currentYear, month, 0).getDate();
+
+    if (day > daysInMonth) {
+      return interaction.reply({ content: `❌ That doesn't look like a valid date for month ${month}.`, flags: [MessageFlags.Ephemeral] });
+    }
+
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).', flags: [MessageFlags.Ephemeral] });
     }
 
     const success = await setBirthday(interaction.user.id, interaction.user.username, day, month, year);
     if (success) {
       const yearStr = year ? `, ${year}` : '';
-      await interaction.reply({ content: `✅ Your birthday has been set to **${month}/${day}${yearStr}**! I'll ping you when the day comes.`, ephemeral: true });
+      await interaction.reply({ content: `✅ Your birthday has been set to **${month}/${day}${yearStr}**! I'll ping you when the day comes.`, flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: '❌ Failed to save your birthday. Please try again later.', ephemeral: true });
+      await interaction.reply({ content: '❌ Failed to save your birthday. Please try again later.', flags: [MessageFlags.Ephemeral] });
     }
   } else if (subcommand === 'remove') {
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
+    }
     const success = await removeBirthday(interaction.user.id);
     if (success) {
-      await interaction.reply({ content: '✅ Your birthday has been removed from our records.', ephemeral: true });
+      await interaction.reply({ content: '✅ Your birthday has been removed from our records.', flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: '❌ Failed to remove your birthday.', ephemeral: true });
+      await interaction.reply({ content: '❌ Failed to remove your birthday.', flags: [MessageFlags.Ephemeral] });
     }
   } else if (subcommand === 'get') {
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled.', flags: [MessageFlags.Ephemeral] });
+    }
     const birthday = await getBirthday(interaction.user.id);
     if (birthday) {
       const yearStr = birthday.year ? `/${birthday.year}` : '';
-      await interaction.reply({ content: `🎂 Your stored birthday is **${birthday.month}/${birthday.day}${yearStr}**.`, ephemeral: true });
+      await interaction.reply({ content: `🎂 Your stored birthday is **${birthday.month}/${birthday.day}${yearStr}**.`, flags: [MessageFlags.Ephemeral] });
     } else {
-      await interaction.reply({ content: '❌ You haven\'t set your birthday yet! Use `/birthday set` to do so.', ephemeral: true });
+      await interaction.reply({ content: '❌ You haven\'t set your birthday yet! Use `/birthday set` to do so.', flags: [MessageFlags.Ephemeral] });
     }
   }
 }
