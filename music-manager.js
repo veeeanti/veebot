@@ -13,6 +13,7 @@ import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 class MusicManager {
   constructor() {
     this.queues = new Map(); // guildId -> { textChannel, voiceChannel, connection, player, songs: [], volume: 5, playing: true, loop: 'none' }
+    this._spotifyConfigured = false;
   }
 
   async ensureSpotifyAuthorized() {
@@ -24,26 +25,30 @@ class MusicManager {
         throw new Error('Spotify credentials missing in environment.');
       }
 
-      // Explicitly set the credentials in play-dl. 
-      // This ensures play-dl uses the latest env vars and initializes its internal Spotify state.
-      await play.setToken({
-        spotify: {
-          client_id: clientId,
-          client_secret: clientSecret
-        }
-      });
-
-      // Ensure a valid token is fetched/refreshed. 
-      // is_expired('spotify') can throw if no token has ever been fetched.
-      try {
-        const isExpired = await play.is_expired('spotify');
-        if (isExpired) {
+      // If we haven't configured Spotify yet in this session, do it now.
+      // Calling setToken resets the token, so we must follow it with refreshToken to get a valid access token.
+      if (!this._spotifyConfigured) {
+        await play.setToken({
+          spotify: {
+            client_id: clientId,
+            client_secret: clientSecret
+          }
+        });
+        
+        // Fetch the initial token immediately after setting credentials
+        await play.refreshToken();
+        this._spotifyConfigured = true;
+      } else {
+        // Already configured, just check if we need to refresh the existing token
+        try {
+          const isExpired = await play.is_expired('spotify');
+          if (isExpired) {
+            await play.refreshToken();
+          }
+        } catch (e) {
+          // If checking expiry fails (e.g. token missing or internal state corrupted), try a refresh anyway
           await play.refreshToken();
         }
-      } catch (e) {
-        // If it throws or is not initialized, we attempt to refresh/fetch the token.
-        // This is safe to call after setToken with valid credentials.
-        await play.refreshToken();
       }
     } catch (e) {
       // Bubble up so caller can decide how to notify users
@@ -206,7 +211,7 @@ class MusicManager {
       }
     } catch (error) {
       console.error('Play command error:', error);
-      const isAuthError = error?.message && /spotify data is missing|authorization/i.test(error.message);
+      const isAuthError = error?.message && /spotify data is missing|authorization|bearer/i.test(error.message);
       const msg = isAuthError
         ? `❌ Spotify authorization failed: **${error.message}**. Please ensure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are correct in your .env file and restart the bot.`
         : `❌ An error occurred while trying to play music: ${error.message}`;
