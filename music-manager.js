@@ -13,6 +13,25 @@ import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 class MusicManager {
   constructor() {
     this.queues = new Map(); // guildId -> { textChannel, voiceChannel, connection, player, songs: [], volume: 5, playing: true, loop: 'none' }
+    this._soundcloudConfigured = false;
+  }
+
+  async ensureSoundCloudAuthorized() {
+    if (this._soundcloudConfigured) return;
+    try {
+      const clientID = await play.getFreeClientID();
+      if (clientID) {
+        await play.setToken({
+          soundcloud: {
+            client_id: clientID
+          }
+        });
+        this._soundcloudConfigured = true;
+        console.log('✅ SoundCloud authorization successful');
+      }
+    } catch (err) {
+      console.warn('⚠️ SoundCloud authorization failed:', err.message);
+    }
   }
 
   async handlePlay(interaction) {
@@ -39,38 +58,79 @@ class MusicManager {
       if (validation === 'yt_playlist') {
         const playlist = await play.playlist_info(query, { incomplete: true });
         const videos = await playlist.all_videos();
-        songs = videos.map(video => ({
-          title: video.title,
-          url: video.url,
-          duration: video.durationRaw,
-          thumbnail: video.thumbnails[0]?.url,
-          source: 'youtube',
-        }));
-        await interaction.editReply(`📝 Added **${songs.length}** tracks from YouTube playlist to the queue.`);
+        songs = videos
+          .filter(v => v.url) // Ensure URL exists
+          .map(video => ({
+            title: video.title || 'Unknown Title',
+            url: video.url,
+            duration: video.durationRaw || 'N/A',
+            thumbnail: video.thumbnails[0]?.url,
+            source: 'youtube',
+          }));
+        if (songs.length > 0) {
+          await interaction.editReply(`📝 Added **${songs.length}** tracks from YouTube playlist to the queue.`);
+        }
       } else if (validation === 'so_track') {
+        await this.ensureSoundCloudAuthorized();
         const soData = await play.soundcloud(query);
-        songs.push({
-          title: soData.name,
-          url: soData.url,
-          duration: soData.durationInMs ? new Date(soData.durationInMs).toISOString().substr(11, 8) : 'N/A',
-          thumbnail: soData.thumbnail,
-          source: 'soundcloud',
-        });
-      } else if (validation === 'yt_video' || validation === 'search') {
+        if (soData && soData.url) {
+          songs.push({
+            title: soData.name || soData.title || 'Unknown SoundCloud Track',
+            url: soData.url,
+            duration: soData.durationInMs ? new Date(soData.durationInMs).toISOString().substr(11, 8) : 'N/A',
+            thumbnail: soData.thumbnail,
+            source: 'soundcloud',
+          });
+        }
+      } else if (validation === 'so_playlist') {
+        await this.ensureSoundCloudAuthorized();
+        const soPlaylist = await play.soundcloud(query);
+        const soTracks = await soPlaylist.all_tracks();
+        songs = soTracks
+          .filter(t => t.url)
+          .map(track => ({
+            title: track.name || track.title || 'Unknown SoundCloud Track',
+            url: track.url,
+            duration: track.durationInMs ? new Date(track.durationInMs).toISOString().substr(11, 8) : 'N/A',
+            thumbnail: track.thumbnail,
+            source: 'soundcloud',
+          }));
+        if (songs.length > 0) {
+          await interaction.editReply(`📝 Added **${songs.length}** tracks from SoundCloud playlist to the queue.`);
+        }
+      } else if (validation === 'yt_video') {
+        const videoInfo = await play.video_info(query);
+        const ytData = videoInfo.video_details;
+        if (ytData && ytData.url) {
+          songs.push({
+            title: ytData.title || 'Unknown Title',
+            url: ytData.url,
+            duration: ytData.durationRaw || 'N/A',
+            thumbnail: ytData.thumbnails[0]?.url,
+            source: 'youtube',
+          });
+        }
+      } else if (validation === 'search') {
         const ytResults = await play.search(query, { limit: 1 });
         if (ytResults.length === 0) {
           return interaction.editReply(`❌ No results found for: **${query}**`);
         }
         const ytData = ytResults[0];
-        songs.push({
-          title: ytData.title,
-          url: ytData.url,
-          duration: ytData.durationRaw,
-          thumbnail: ytData.thumbnails[0]?.url,
-          source: 'youtube',
-        });
+        if (ytData && ytData.url) {
+          songs.push({
+            title: ytData.title || 'Unknown Title',
+            url: ytData.url,
+            duration: ytData.durationRaw || 'N/A',
+            thumbnail: ytData.thumbnails[0]?.url,
+            source: 'youtube',
+          });
+        }
       } else {
         return interaction.editReply('❌ Unsupported URL or search query.');
+      }
+
+      if (songs.length === 0) {
+        return interaction.editReply('❌ No playable tracks found.');
       }
 
       let serverQueue = this.queues.get(guildId);
@@ -198,6 +258,13 @@ class MusicManager {
     }
 
     try {
+      if (!song.url) {
+        console.error('Error: Song URL is missing');
+        serverQueue.textChannel.send('❌ Error: Song URL is missing. Skipping to next.');
+        serverQueue.songs.shift();
+        return this.play(guildId, serverQueue.songs[0]);
+      }
+
       const streamResult = await play.stream(song.url);
       const resource = createAudioResource(streamResult.stream, {
         inputType: streamResult.type,
