@@ -85,7 +85,14 @@ SQLITE_PATH=./database.sqlite
 
 ## Music setup
 
-The bot supports playing from YouTube and SoundCloud via `play-dl`. No extra API credentials are required for these services.
+The music bot functionality is implemented in Python and integrated with the main Node.js bot.
+
+1.  **Python 3.10+** is required.
+2.  Install Python dependencies: `pip install -r requirements.txt`
+3.  Ensure `ffmpeg` is available (the Node.js `ffmpeg-static` is used by default).
+4.  The bot supports playing from YouTube and SoundCloud.
+
+The music bot runs as a separate process managed by `music-manager.js`.
 
 ## License
 
