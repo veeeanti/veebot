@@ -1,4 +1,4 @@
-﻿﻿import {
+﻿import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
@@ -32,7 +32,6 @@ class MusicManager {
         }
       } catch (e) {
         // If is_expired fails, it likely means we haven't authorized yet at all
-        await play.getFreeToken(); // Some internal play-dl logic benefits from this
         await play.authorization();
       }
     } catch (e) {
