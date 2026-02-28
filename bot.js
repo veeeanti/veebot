@@ -1379,7 +1379,7 @@ async function searchGoogleForUnionCraxGames(query) {
         title:         topGame.title,
         url:           topGame.url,
         description:   topGame.description,
-        source:        'UnionCrax via Google',
+        source:        'union-crax.xyz',
         downloadCount: topGame.downloadCount,
         size:          topGame.size,
       };
