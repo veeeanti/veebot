@@ -56,7 +56,7 @@ const MOD_LOG_CHANNEL_ID     = process.env.MOD_LOG_CHANNEL_ID || null;
 // Spam detection thresholds (configurable via env)
 const SPAM_IMAGE_THRESHOLD   = parseInt(process.env.SPAM_IMAGE_THRESHOLD  || '4', 10);
 const SPAM_LINK_THRESHOLD    = parseInt(process.env.SPAM_LINK_THRESHOLD   || '4', 10);
-const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10);
+const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10); // 30s
 
 const START_TIME = Date.now();
 let lastResponseTime = 0;
@@ -239,118 +239,6 @@ const commands = [
     name: 'stats',
     description: 'Show server statistics',
     integration_types: [0], // Guild only
-    contexts: [0],
-  },
-  {
-    name: 'play',
-    description: 'Play music from YouTube or SoundCloud',
-    options: [
-      {
-        name: 'query',
-        description: 'The song name or URL',
-        type: 3, // STRING
-        required: true,
-      },
-    ],
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'stop',
-    description: 'Stop the music and clear the queue',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'skip',
-    description: 'Skip the current song',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'queue',
-    description: 'Show the current music queue',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'nowplaying',
-    description: 'Show what is currently playing',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'pause',
-    description: 'Pause the current song',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'resume',
-    description: 'Resume the current song',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'volume',
-    description: 'Change the music volume',
-    options: [
-      {
-        name: 'volume',
-        description: 'Volume level (0-100)',
-        type: 4, // INTEGER
-        required: true,
-        min_value: 0,
-        max_value: 100,
-      },
-    ],
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'loop',
-    description: 'Set the loop mode',
-    options: [
-      {
-        name: 'mode',
-        description: 'Loop mode',
-        type: 3, // STRING
-        required: true,
-        choices: [
-          { name: 'Off', value: 'none' },
-          { name: 'Song', value: 'song' },
-          { name: 'Queue', value: 'queue' },
-        ],
-      },
-    ],
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'shuffle',
-    description: 'Shuffle the music queue',
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'remove',
-    description: 'Remove a song from the queue',
-    options: [
-      {
-        name: 'index',
-        description: 'The index of the song to remove',
-        type: 4, // INTEGER
-        required: true,
-        min_value: 1,
-      },
-    ],
-    integration_types: [0],
-    contexts: [0],
-  },
-  {
-    name: 'clear',
-    description: 'Clear the music queue',
-    integration_types: [0],
     contexts: [0],
   },
   {
@@ -618,42 +506,6 @@ client.on('interactionCreate', async (interaction) => {
       case 'birthday':
         await handleBirthdaySlashCommand(interaction);
         break;
-      case 'play':
-        await musicManager.handlePlay(interaction);
-        break;
-      case 'stop':
-        await musicManager.handleStop(interaction);
-        break;
-      case 'skip':
-        await musicManager.handleSkip(interaction);
-        break;
-      case 'queue':
-        await musicManager.handleQueue(interaction);
-        break;
-      case 'nowplaying':
-        await musicManager.handleNowPlaying(interaction);
-        break;
-      case 'pause':
-        await musicManager.handlePause(interaction);
-        break;
-      case 'resume':
-        await musicManager.handleResume(interaction);
-        break;
-      case 'volume':
-        await musicManager.handleVolume(interaction);
-        break;
-      case 'loop':
-        await musicManager.handleLoop(interaction);
-        break;
-      case 'shuffle':
-        await musicManager.handleShuffle(interaction);
-        break;
-      case 'remove':
-        await musicManager.handleRemove(interaction);
-        break;
-      case 'clear':
-        await musicManager.handleClear(interaction);
-        break;
       default:
         await interaction.reply({ content: '❓ Unknown command.' });
     }
@@ -696,6 +548,21 @@ client.on('messageCreate', async (message) => {
           break;
         case 'location':
           await handleLocationCommand(message);
+          break;
+              case 'ping':
+        await handlePingSlashCommand(message);
+        break;
+        case 'ask':
+          await handleAskSlashCommand(message, args);
+          break;
+        case 'stats':
+          await handleStatsSlashCommand(message);
+         break;
+        case 'help':
+          await handleHelpSlashCommand(message);
+          break;
+        case 'birthday':
+          await handleBirthdaySlashCommand(message, args);
           break;
         default:
           message.reply(`❓ Unknown command. Use slash commands: /search, /info, /location, /ping, /ask, /stats, /help`);
@@ -762,6 +629,8 @@ client.on('messageCreate', async (message) => {
  * SECTION 11: SPAM DETECTION
  * Detects and auto-bans users posting image/link spam
  * Includes image spam and link spam detection functions
+ * e.g., those Mr. Beast and other Twitter celebrities fake post about free
+ * bitcoin or crypto to steal your account info and token possibly.
  * ───────────────────────────────────────────────────────────────────────────────*/
 async function detectImageSpam(message) {
   if (!message.guild) return;

@@ -210,11 +210,6 @@ export async function storeMessage(messageData) {
  * SECTION 5b: findSimilarMessages()
  * Searches for messages similar to the query using text search
  * Uses PostgreSQL ts_rank or SQLite FTS5 for full-text search
- * @param {string} queryText - Text to search for
- * @param {string} guildId - Discord server ID
- * @param {string|null} authorId - Optional: filter by author
- * @param {number} limit - Max results to return
- * @returns {Array} - Array of similar messages with similarity scores
  */
 export async function findSimilarMessages(queryText, guildId, authorId = null, limit = 5) {
     try {
@@ -262,10 +257,6 @@ export async function findSimilarMessages(queryText, guildId, authorId = null, l
 /*
  * SECTION 5c: getRecentMessages()
  * Gets the most recent messages from a guild (for fallback context)
- * @param {string} guildId - Discord server ID
- * @param {string|null} authorId - Optional: filter by author
- * @param {number} limit - Max messages to retrieve
- * @returns {Array} - Array of recent messages
  */
 export async function getRecentMessages(guildId, authorId = null, limit = 10) {
     try {
@@ -300,8 +291,6 @@ export async function getRecentMessages(guildId, authorId = null, limit = 10) {
  * SECTION 5d: cleanupOldMessages()
  * Deletes user messages older than specified days
  * Helps keep database size manageable
- * @param {number} daysOld - Delete messages older than this many days
- * @returns {number} - Number of messages deleted
  */
 export async function cleanupOldMessages(daysOld = 30) {
     try {
@@ -328,12 +317,6 @@ export async function cleanupOldMessages(daysOld = 30) {
 /*
  * SECTION 6a: setBirthday()
  * Saves or updates a user's birthday
- * @param {string} userId - Discord user ID
- * @param {string} username - Discord username
- * @param {number} day - Day of month (1-31)
- * @param {number} month - Month (1-12)
- * @param {number|null} year - Birth year (optional)
- * @returns {boolean} - True if successful
  */
 export async function setBirthday(userId, username, day, month, year = null) {
     try {
@@ -374,8 +357,6 @@ export async function setBirthday(userId, username, day, month, year = null) {
 /*
  * SECTION 6b: getBirthday()
  * Retrieves a user's stored birthday
- * @param {string} userId - Discord user ID
- * @returns {Object|null} - Birthday object or null if not set
  */
 export async function getBirthday(userId) {
     try {
@@ -394,8 +375,6 @@ export async function getBirthday(userId) {
 /*
  * SECTION 6c: removeBirthday()
  * Deletes a user's birthday from the database
- * @param {string} userId - Discord user ID
- * @returns {boolean} - True if successful
  */
 export async function removeBirthday(userId) {
     try {
@@ -414,10 +393,6 @@ export async function removeBirthday(userId) {
 /*
  * SECTION 6d: getTodaysBirthdays()
  * Gets all users with birthdays today who haven't been pinged this year
- * @param {number} day - Current day
- * @param {number} month - Current month
- * @param {number} currentYear - Current year
- * @returns {Array} - Array of users with birthdays today
  */
 export async function getTodaysBirthdays(day, month, currentYear) {
     try {
@@ -447,9 +422,6 @@ export async function getTodaysBirthdays(day, month, currentYear) {
  * SECTION 6e: markBirthdayAsPinged()
  * Records that a user was pinged for their birthday this year
  * Prevents duplicate pings in the same year
- * @param {string} userId - Discord user ID
- * @param {number} year - Current year
- * @returns {boolean} - True if successful
  */
 export async function markBirthdayAsPinged(userId, year) {
     try {

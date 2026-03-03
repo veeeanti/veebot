@@ -5,9 +5,9 @@
  * ───────────────────────────────────────────────────────────────────────────────*/
 
 // SECTION 1: Configuration
+// Not much here except this.
 const EMBEDDING_DIMENSION = 512;
 
-const EMBEDDING_DIMENSION = 512;
 
 /*══════════════════════════════════════════════════════════════════════════*
  * SECTION 2: EMBEDDING GENERATION FUNCTIONS
@@ -18,9 +18,6 @@ const EMBEDDING_DIMENSION = 512;
  * Creates a simple hash-based embedding vector for text
  * NOTE: This is a fallback - not semantically meaningful!
  * Real embeddings would use OpenAI or similar AI service
- * 
- * @param {string} text - Text to generate embedding for
- * @returns {number[]} Array of 512 floating-point numbers
  */
 export function generateEmbedding(text) {
     const embedding = new Array(EMBEDDING_DIMENSION).fill(0);
@@ -56,10 +53,6 @@ export function generateBatchEmbeddings(texts) {
  * calculateCosineSimilarity()
  * Measures how similar two embedding vectors are (0-1 scale)
  * Uses dot product formula: (A·B) / (||A|| × ||B||)
- * 
- * @param {number[]} embedding1 - First embedding vector
- * @param {number[]} embedding2 - Second embedding vector
- * @returns {number} Similarity score between 0 and 1
  */
 export function calculateCosineSimilarity(embedding1, embedding2) {
     if (embedding1.length !== embedding2.length) {
@@ -83,11 +76,6 @@ export function calculateCosineSimilarity(embedding1, embedding2) {
 /**
  * calculateTextSimilarity()
  * Compares two texts using word overlap (Jaccard) + length similarity
- * This is the main similarity function used for context matching
- * 
- * @param {string} text1 - First text to compare
- * @param {string} text2 - Second text to compare
- * @returns {number} Similarity score between 0 and 1
  */
 export function calculateTextSimilarity(text1, text2) {
     const words1 = text1.toLowerCase().split(/\s+/);
