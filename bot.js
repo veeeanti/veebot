@@ -1,5 +1,6 @@
 // Load env
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config();
 import {
   Client,
   GatewayIntentBits,
@@ -756,12 +757,23 @@ async function detectImageSpam(message) {
     console.log(`DEBUG [ImageSpam] ${message.author.tag}: ${totalImages} images across ${uniqueChannels.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
   }
 
-  // Trigger: threshold images sent across more than one channel within the window
-  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size > 1) {
+  // Trigger 1: threshold images sent across channels within the window
+  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size >= 1) {
     await handleSpamDetection(
       message,
       'image spam',
       `Sent ${totalImages} image(s) across ${uniqueChannels.size} channels within ${SPAM_WINDOW_MS / 1000}s`
+    );
+    userSpamTracking.delete(userId);
+    return;
+  }
+
+  // Also trigger on rapid image spam in a single message (burst detection)
+  if (imageCount >= SPAM_IMAGE_THRESHOLD * 2) {
+    await handleSpamDetection(
+      message,
+      'image spam',
+      `Sent ${imageCount} image(s) in a single message (possible mass upload)`
     );
     userSpamTracking.delete(userId);
   }
@@ -794,7 +806,18 @@ async function detectLinkSpam(message) {
     console.log(`DEBUG [LinkSpam] ${message.author.tag}: ${totalLinks} links across ${uniqueCh.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
   }
 
-  // Trigger 1: threshold or more links in a single message (mass-link blast)
+  // Trigger 1: very high link count in a single message (mass-link blast)
+  if (linkCount >= SPAM_LINK_THRESHOLD * 2) {
+    await handleSpamDetection(
+      message,
+      'link spam',
+      `Sent ${linkCount} link(s) in a single message`
+    );
+    userSpamTracking.delete(userId);
+    return;
+  }
+
+  // Trigger 2: threshold links in a single message
   if (linkCount >= SPAM_LINK_THRESHOLD) {
     await handleSpamDetection(
       message,
@@ -805,7 +828,7 @@ async function detectLinkSpam(message) {
     return;
   }
 
-  // Trigger 2: threshold or more links spread across multiple channels within the window
+  // Trigger 3: threshold or more links spread across channels within the window
   const uniqueChannels = new Set(tracking.links.map(entry => entry.channelId));
   const totalLinks     = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
 
@@ -822,11 +845,20 @@ async function detectLinkSpam(message) {
 async function handleSpamDetection(message, spamType, reason) {
   try {
     const member = message.member;
-    if (!member) return;
+    if (!member) {
+      logger.warn(`Spam detection: Could not get member from message`);
+      return;
+    }
 
     // Ensure the bot has permission to ban
     if (!message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) {
       logger.warn(`Cannot ban ${member.user.tag}: Missing BAN_MEMBERS permission`);
+      // Fall back to warning message if can't ban
+      try {
+        await message.channel.send(
+          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but I lack permission to ban.\n> ${reason}`
+        );
+      } catch (e) { /* ignore */ }
       return;
     }
 
@@ -835,13 +867,36 @@ async function handleSpamDetection(message, spamType, reason) {
       member.permissions.has(PermissionFlagsBits.Administrator) ||
       member.permissions.has(PermissionFlagsBits.ModerateMembers)
     ) {
-      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions — skipping auto-ban`);
+      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions — nothing I can do.`);
+      try {
+        await message.channel.send(
+          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but has mod/admin permissions.`
+        );
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    // Check role hierarchy - can't ban users with higher or equal role
+    const botMember = message.guild.members.me;
+    if (member.roles.highest.position >= botMember.roles.highest.position) {
+      logger.warn(`Cannot ban ${member.user.tag}: User's role is equal or higher than mine.`);
+      try {
+        await message.channel.send(
+          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but cannot be banned due to role hierarchy.`
+        );
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    // Check if user is the guild owner
+    if (member.id === message.guild.ownerId) {
+      logger.warn(`Cannot ban ${member.user.tag}: User is the server owner. What do you expect me to do?`);
       return;
     }
 
     logger.warn(`🚨 SPAM DETECTED: ${member.user.tag} (${member.id}) - ${spamType}: ${reason}`);
 
-    // Notify the channel where spam was detected
+    // Notify the channel where spam was detected BEFORE banning
     try {
       await message.channel.send(
         `🚨 **Auto-moderation**: <@${member.id}> has been automatically banned for **${spamType}**.\n> ${reason}`
@@ -851,12 +906,24 @@ async function handleSpamDetection(message, spamType, reason) {
     }
 
     // Execute the ban (delete last 24 h of messages)
-    await member.ban({
-      reason: `[Auto-ban] ${spamType} — ${reason}`,
-      deleteMessageSeconds: 60 * 60 * 24,
-    });
+    try {
+      await member.ban({
+        reason: `[Auto-ban] ${spamType} — ${reason}`,
+        deleteMessageSeconds: 60 * 60 * 24,
+      });
+      logger.info(`✅ Successfully banned ${member.user.tag} (${member.id}) for ${spamType}`);
+    } catch (banError) {
+      logger.error(`Failed to ban ${member.user.tag}: ${banError.message}`);
+      try {
+        await message.channel.send(
+          `❌ **Auto-moderation Error**: Failed to ban <@${member.id}>. ${banError.message}`
+        );
+      } catch (e) { /* ignore */ }
+      return;
+    }
 
-    logger.info(`✅ Successfully banned ${member.user.tag} (${member.id}) for ${spamType}`);
+    // Clear spam tracking for this user after successful ban
+    userSpamTracking.delete(member.id);
 
     // Post a detailed embed to the mod-log channel if configured
     if (MOD_LOG_CHANNEL_ID) {
@@ -1076,7 +1143,6 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
-      { name: '🎵 Music Commands', value: '`/play <query>`, `/stop`, `/skip`, `/queue`, `/nowplaying`, `/pause`, `/resume`, `/volume <0-100>`, `/loop <off|song|queue>`, `/shuffle`, `/remove <index>`, `/clear` (Supports YouTube and SoundCloud)' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
@@ -1236,9 +1302,9 @@ async function handleBirthdaySlashCommand(interaction) {
     const success = await removeBirthday(targetUser.id);
     if (success) {
       const userStr = isSelf ? 'Your' : `<@${targetUser.id}>'s`;
-      await interaction.reply({ content: `✅ ${userStr} birthday has been removed from our records.` });
+      await interaction.reply({ content: `✅ ${userStr} birthday has been removed from our records. You will not be told happy birthday by me.` });
     } else {
-      await interaction.reply({ content: '❌ Failed to remove the birthday.' });
+      await interaction.reply({ content: '❌ Failed to remove the birthday. Database may be broken anyways.' });
     }
   } else if (subcommand === 'get') {
     if (!ENABLE_DATABASE) {
