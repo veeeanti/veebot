@@ -31,7 +31,10 @@ import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
 import musicManager from './music-manager.js';
 
-// ─── Configuration ────────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 1: CONFIGURATION & SETUP
+ * Contains all environment variables, constants, and initialization code
+ * ───────────────────────────────────────────────────────────────────────────────*/
 const DISCORD_TOKEN          = process.env.DISCORD_TOKEN;
 const GUILD_ID               = process.env.GUILD_ID;
 const CHANNEL_ID             = process.env.CHANNEL_ID;
@@ -76,7 +79,10 @@ const config = {
   ],
 };
 
-// ─── Logger ───────────────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 2: LOGGER SETUP
+ * Winston logger configuration for console and file logging
+ * ───────────────────────────────────────────────────────────────────────────────*/
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -89,7 +95,10 @@ const logger = winston.createLogger({
   ],
 });
 
-// ─── Discord client ───────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 3: DISCORD CLIENT INITIALIZATION
+ * Creates the Discord bot client with required intents
+ * ───────────────────────────────────────────────────────────────────────────────*/
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -103,7 +112,10 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// ─── Slash command definitions ────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 4: SLASH COMMAND DEFINITIONS
+ * All /command definitions (search, info, birthday, music, etc.)
+ * ───────────────────────────────────────────────────────────────────────────────*/
 // Using raw JSON objects so they work with both v13 and v14 REST API
 const commands = [
   {
@@ -349,7 +361,10 @@ const commands = [
   },
 ];
 
-// ─── Register slash commands ──────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 5: COMMAND REGISTRATION
+ * Registers slash commands with Discord API
+ * ───────────────────────────────────────────────────────────────────────────────*/
 async function registerSlashCommands() {
   try {
     const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
@@ -380,7 +395,11 @@ async function registerSlashCommands() {
   }
 }
 
-// ─── AI Response Function ─────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 6: AI RESPONSE GENERATION
+ * Handles AI-powered responses using OpenRouter API
+ * Includes semantic context retrieval for smarter responses
+ * ───────────────────────────────────────────────────────────────────────────────*/
 async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
   try {
     let contextText = '';
@@ -464,7 +483,10 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
   }
 }
 
-// ─── Initialize System ────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 7: SYSTEM INITIALIZATION
+ * Sets up database, semantic context manager, and mode selection
+ * ───────────────────────────────────────────────────────────────────────────────*/
 async function initializeSystem() {
   console.log('🚀 Initializing UC-AIv2...');
 
@@ -524,7 +546,10 @@ async function initializeSystem() {
   }
 }
 
-// ─── Bot ready event ──────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 8: BOT READY EVENT
+ * Runs once when bot logs in - sets up commands, status, and periodic tasks
+ * ───────────────────────────────────────────────────────────────────────────────*/
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}!`);
   console.log(`\n✅ Logged in as ${client.user.tag} — Let's get this bread started`);
@@ -558,7 +583,10 @@ client.once('ready', async () => {
   }
 });
 
-// ─── Interaction handler ──────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 9: INTERACTION HANDLER
+ * Routes slash commands to their respective handlers
+ * ───────────────────────────────────────────────────────────────────────────────*/
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -640,7 +668,10 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// ─── Message event handler ────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 10: MESSAGE EVENT HANDLER
+ * Processes regular messages, runs spam detection, handles AI responses
+ * ───────────────────────────────────────────────────────────────────────────────*/
 client.on('messageCreate', async (message) => {
   // Run spam detection for ALL non-bot guild messages, regardless of other filters
   if (SPAM_DETECTION_ENABLED && message.guild && !message.author.bot) {
@@ -727,7 +758,11 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ─── Spam detection ───────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 11: SPAM DETECTION
+ * Detects and auto-bans users posting image/link spam
+ * Includes image spam and link spam detection functions
+ * ───────────────────────────────────────────────────────────────────────────────*/
 async function detectImageSpam(message) {
   if (!message.guild) return;
 
@@ -957,7 +992,10 @@ async function handleSpamDetection(message, spamType, reason) {
   }
 }
 
-// ─── Utility helpers ──────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 12: UTILITY HELPERS
+ * Miscellaneous helper functions (shouldProcessMessage, updateBotStatus, etc.)
+ * ───────────────────────────────────────────────────────────────────────────────*/
 function shouldProcessMessage(message) {
   if (message.author.id === client.user?.id) {
     if (DEBUG) console.log('DEBUG: Ignoring own message');
@@ -1028,7 +1066,10 @@ function formatUptime(ms) {
   return `${hours}h ${minutes}m ${seconds}s`;
 }
 
-// ─── Slash command handlers ───────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 13: SLASH COMMAND HANDLERS
+ * Implementation of each slash command (/ping, /ask, /stats, /birthday, etc.)
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
 /** /ping — latency check */
 async function handlePingSlashCommand(interaction) {
@@ -1322,7 +1363,10 @@ async function handleBirthdaySlashCommand(interaction) {
   }
 }
 
-// ─── Legacy prefix command handlers ──────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 14: LEGACY PREFIX COMMAND HANDLERS
+ * Old-style !commands (e.g., !search, !info) for backwards compatibility
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
 async function handleSearchCommand(message, args) {
   if (args.length === 0) {
@@ -1417,7 +1461,10 @@ async function handleLocationCommand(message) {
   }
 }
 
-// ─── UnionCrax search helpers ─────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 15: SEARCH HELPERS
+ * Functions for searching UnionCrax game database and web search
+ * ───────────────────────────────────────────────────────────────────────────────*/
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
 
 function normalizeString(str) {
@@ -1572,7 +1619,10 @@ async function performWebSearch(query) {
   }
 }
 
-// ─── Graceful shutdown ────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 16: SHUTDOWN & LOGIN
+ * Graceful shutdown handlers and bot login
+ * ───────────────────────────────────────────────────────────────────────────────*/
 async function shutdown() {
   console.log('\n🛑 Shutting down, bye-byee...');
   if (ENABLE_DATABASE) {

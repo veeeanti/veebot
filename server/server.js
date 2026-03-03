@@ -1,3 +1,9 @@
+/*══════════════════════════════════════════════════════════════════════════*
+ * SERVER - Express Backend for Discord OAuth2
+ * Handles token exchange and user info for Discord Embedded App SDK
+ * Run separately from the main bot (e.g., on port 3001)
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
@@ -7,7 +13,10 @@ dotenv.config({ path: "../.env" });
 const app  = express();
 const port = process.env.PORT || 3001;
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 1: MIDDLEWARE SETUP
+ * Express JSON parsing and CORS headers
+ * ───────────────────────────────────────────────────────────────────────────────*/
 app.use(express.json());
 
 // Basic CORS for local development
@@ -19,12 +28,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Health check ─────────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 2: HEALTH CHECK ENDPOINT
+ * GET /health - Returns server status
+ * ───────────────────────────────────────────────────────────────────────────────*/
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// ─── Discord OAuth2 token exchange ────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 3: DISCORD OAUTH2 ENDPOINTS
+ * Token exchange and user info endpoints
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+// SECTION 3a: Token Exchange
+// POST /api/token - Exchange authorization code for access token
 // Used by the Discord Embedded App SDK to exchange an authorization code for
 // an access token.  The client sends { code } and receives { access_token }.
 app.post("/api/token", async (req, res) => {
@@ -71,7 +89,8 @@ app.post("/api/token", async (req, res) => {
   }
 });
 
-// ─── Discord user info (optional helper) ─────────────────────────────────────
+// SECTION 3b: User Info
+// GET /api/me - Get current Discord user from Bearer token
 // Accepts a Bearer token and returns the current Discord user object.
 app.get("/api/me", async (req, res) => {
   const authHeader = req.headers.authorization;
@@ -96,7 +115,9 @@ app.get("/api/me", async (req, res) => {
   }
 });
 
-// ─── Start server ─────────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 4: SERVER STARTUP
+ * ───────────────────────────────────────────────────────────────────────────────*/
 app.listen(port, () => {
   console.log(`✅ Server listening at http://localhost:${port}`);
   console.log(`   POST /api/token  — Discord OAuth2 code exchange`);

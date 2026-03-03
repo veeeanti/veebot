@@ -1,5 +1,11 @@
-﻿// Database connection and initialization for UC-AIv2
-// Supports both PostgreSQL (remote/server) and SQLite (local/file)
+﻿/*══════════════════════════════════════════════════════════════════════════*
+ * DATABASE - SQLite/PostgreSQL Connection Manager
+ * Handles all database operations: messages, birthdays, context storage
+ * Supports both PostgreSQL (server) and SQLite (local file)
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+// SECTION 1: Database Connection Setup
+// Connects to PostgreSQL or SQLite based on DATABASE_TYPE env var
 import { Pool } from 'pg';
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -50,6 +56,11 @@ if (DB_TYPE === 'postgres') {
     }
 }
 
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 2: CONNECTION TESTING
+ * Tests database connectivity and reports status
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 export async function testConnection() {
     if (DB_TYPE === 'postgres') {
         try {
@@ -73,6 +84,11 @@ export async function testConnection() {
         }
     }
 }
+
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 3: SCHEMA INITIALIZATION
+ * Creates tables and indexes based on schema-sqlite.sql or schema.sql
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
 export async function initializeDatabase() {
     try {
@@ -129,13 +145,27 @@ export async function initializeDatabase() {
     }
 }
 
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 4: CONNECTION CLOSING
+ * Gracefully closes database connections on shutdown
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 export async function closeDatabase() {
     if (pgPool) await pgPool.end();
     if (sqliteDb) sqliteDb.close();
 }
 
-// ─── Message functions ────────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 5: MESSAGE FUNCTIONS
+ * Store, search, and retrieve conversation messages for AI context
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
+/*
+ * SECTION 5a: storeMessage()
+ * Stores a single message (user or assistant) in the database
+ * @param {Object} messageData - { discordMessageId, content, authorId, authorName, channelId, guildId, messageType }
+ * @returns {Object|null} - Stored message with created_at timestamp
+ */
 export async function storeMessage(messageData) {
     const {
         discordMessageId, content, authorId, authorName,
@@ -176,6 +206,16 @@ export async function storeMessage(messageData) {
     }
 }
 
+/*
+ * SECTION 5b: findSimilarMessages()
+ * Searches for messages similar to the query using text search
+ * Uses PostgreSQL ts_rank or SQLite FTS5 for full-text search
+ * @param {string} queryText - Text to search for
+ * @param {string} guildId - Discord server ID
+ * @param {string|null} authorId - Optional: filter by author
+ * @param {number} limit - Max results to return
+ * @returns {Array} - Array of similar messages with similarity scores
+ */
 export async function findSimilarMessages(queryText, guildId, authorId = null, limit = 5) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -219,6 +259,14 @@ export async function findSimilarMessages(queryText, guildId, authorId = null, l
     }
 }
 
+/*
+ * SECTION 5c: getRecentMessages()
+ * Gets the most recent messages from a guild (for fallback context)
+ * @param {string} guildId - Discord server ID
+ * @param {string|null} authorId - Optional: filter by author
+ * @param {number} limit - Max messages to retrieve
+ * @returns {Array} - Array of recent messages
+ */
 export async function getRecentMessages(guildId, authorId = null, limit = 10) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -248,6 +296,13 @@ export async function getRecentMessages(guildId, authorId = null, limit = 10) {
     }
 }
 
+/*
+ * SECTION 5d: cleanupOldMessages()
+ * Deletes user messages older than specified days
+ * Helps keep database size manageable
+ * @param {number} daysOld - Delete messages older than this many days
+ * @returns {number} - Number of messages deleted
+ */
 export async function cleanupOldMessages(daysOld = 30) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -265,8 +320,21 @@ export async function cleanupOldMessages(daysOld = 30) {
     }
 }
 
-// ─── Birthday functions ──────────────────────────────────────────────────────
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 6: BIRTHDAY FUNCTIONS
+ * Store, retrieve, and manage user birthdays for birthday announcements
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
+/*
+ * SECTION 6a: setBirthday()
+ * Saves or updates a user's birthday
+ * @param {string} userId - Discord user ID
+ * @param {string} username - Discord username
+ * @param {number} day - Day of month (1-31)
+ * @param {number} month - Month (1-12)
+ * @param {number|null} year - Birth year (optional)
+ * @returns {boolean} - True if successful
+ */
 export async function setBirthday(userId, username, day, month, year = null) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -303,6 +371,12 @@ export async function setBirthday(userId, username, day, month, year = null) {
     }
 }
 
+/*
+ * SECTION 6b: getBirthday()
+ * Retrieves a user's stored birthday
+ * @param {string} userId - Discord user ID
+ * @returns {Object|null} - Birthday object or null if not set
+ */
 export async function getBirthday(userId) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -317,6 +391,12 @@ export async function getBirthday(userId) {
     }
 }
 
+/*
+ * SECTION 6c: removeBirthday()
+ * Deletes a user's birthday from the database
+ * @param {string} userId - Discord user ID
+ * @returns {boolean} - True if successful
+ */
 export async function removeBirthday(userId) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -331,6 +411,14 @@ export async function removeBirthday(userId) {
     }
 }
 
+/*
+ * SECTION 6d: getTodaysBirthdays()
+ * Gets all users with birthdays today who haven't been pinged this year
+ * @param {number} day - Current day
+ * @param {number} month - Current month
+ * @param {number} currentYear - Current year
+ * @returns {Array} - Array of users with birthdays today
+ */
 export async function getTodaysBirthdays(day, month, currentYear) {
     try {
         if (DB_TYPE === 'postgres') {
@@ -355,6 +443,14 @@ export async function getTodaysBirthdays(day, month, currentYear) {
     }
 }
 
+/*
+ * SECTION 6e: markBirthdayAsPinged()
+ * Records that a user was pinged for their birthday this year
+ * Prevents duplicate pings in the same year
+ * @param {string} userId - Discord user ID
+ * @param {number} year - Current year
+ * @returns {boolean} - True if successful
+ */
 export async function markBirthdayAsPinged(userId, year) {
     try {
         if (DB_TYPE === 'postgres') {

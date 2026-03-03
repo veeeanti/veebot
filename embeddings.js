@@ -1,12 +1,26 @@
-// Own version of OpenAI embeddings
+/*══════════════════════════════════════════════════════════════════════════*
+ * EMBEDDINGS - Text Similarity & Embedding Functions
+ * Provides local text-based embeddings and similarity calculations
+ * Used for semantic search without external AI APIs
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+// SECTION 1: Configuration
+const EMBEDDING_DIMENSION = 512;
 
 const EMBEDDING_DIMENSION = 512;
 
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 2: EMBEDDING GENERATION FUNCTIONS
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 /**
- * Generate simple hash-based embedding for text
- * Note: This is not semantically meaningful, but provides a fallback
+ * generateEmbedding()
+ * Creates a simple hash-based embedding vector for text
+ * NOTE: This is a fallback - not semantically meaningful!
+ * Real embeddings would use OpenAI or similar AI service
+ * 
  * @param {string} text - Text to generate embedding for
- * @returns {number[]} Simple hash-based embedding
+ * @returns {number[]} Array of 512 floating-point numbers
  */
 export function generateEmbedding(text) {
     const embedding = new Array(EMBEDDING_DIMENSION).fill(0);
@@ -24,19 +38,28 @@ export function generateEmbedding(text) {
 }
 
 /**
- * Generate embeddings for multiple texts in batch
+ * generateBatchEmbeddings()
+ * Generate embeddings for multiple texts at once
+ * 
  * @param {string[]} texts - Array of texts to generate embeddings for
- * @returns {Promise<number[][]>} Array of embedding arrays
+ * @returns {number[][]} Array of embedding arrays
  */
 export function generateBatchEmbeddings(texts) {
     return texts.map(text => generateEmbedding(text));
 }
 
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 3: SIMILARITY CALCULATION FUNCTIONS
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 /**
- * Calculate cosine similarity between two embeddings
- * @param {number[]} embedding1 - First embedding
- * @param {number[]} embedding2 - Second embedding
- * @returns {number} Cosine similarity (0-1)
+ * calculateCosineSimilarity()
+ * Measures how similar two embedding vectors are (0-1 scale)
+ * Uses dot product formula: (A·B) / (||A|| × ||B||)
+ * 
+ * @param {number[]} embedding1 - First embedding vector
+ * @param {number[]} embedding2 - Second embedding vector
+ * @returns {number} Similarity score between 0 and 1
  */
 export function calculateCosineSimilarity(embedding1, embedding2) {
     if (embedding1.length !== embedding2.length) {
@@ -58,11 +81,13 @@ export function calculateCosineSimilarity(embedding1, embedding2) {
 }
 
 /**
- * Simple text-based similarity calculation
- * Uses basic word overlap and length similarity
- * @param {string} text1 - First text
- * @param {string} text2 - Second text
- * @returns {number} Similarity score (0-1)
+ * calculateTextSimilarity()
+ * Compares two texts using word overlap (Jaccard) + length similarity
+ * This is the main similarity function used for context matching
+ * 
+ * @param {string} text1 - First text to compare
+ * @param {string} text2 - Second text to compare
+ * @returns {number} Similarity score between 0 and 1
  */
 export function calculateTextSimilarity(text1, text2) {
     const words1 = text1.toLowerCase().split(/\s+/);
@@ -85,9 +110,14 @@ export function calculateTextSimilarity(text1, text2) {
     return (jaccardSimilarity + lengthSimilarity) / 2;
 }
 
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 4: SERVICE TESTING
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
 /**
- * Test embedding service (always returns true since it's local)
- * @returns {Promise<boolean>} Success status
+ * testEmbeddingService()
+ * Verifies the embedding service is working
+ * @returns {Promise<boolean>} True if service is working
  */
 export async function testEmbeddingService() {
     try {

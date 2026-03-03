@@ -5,11 +5,21 @@ import {
     cleanupOldMessages
 } from './database.js';
 
-// Configuration
+/*══════════════════════════════════════════════════════════════════════════*
+ * CONTEXT MANAGER - Semantic Memory for the AI Bot
+ * Stores and retrieves conversation context for smarter AI responses
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+// SECTION 1: Configuration & Constants
 const ENABLE_SEMANTIC_SEARCH = process.env.ENABLE_SEMANTIC_SEARCH === 'true';
 const MAX_CONTEXT_MESSAGES = parseInt(process.env.MAX_CONTEXT_MESSAGES) || 20;
 const CONTEXT_SIMILARITY_THRESHOLD = parseFloat(process.env.CONTEXT_SIMILARITY_THRESHOLD) || 0.7;
 const DEBUG = process.env.DEBUG === 'true';
+
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 2: SEMANTIC CONTEXT MANAGER CLASS
+ * Core class that manages message storage and context retrieval
+ * ───────────────────────────────────────────────────────────────────────────────*/
 
 class SemanticContextManager {
     constructor() {
@@ -18,7 +28,10 @@ class SemanticContextManager {
     }
 
     /**
-     * Initialize the semantic context manager
+     * SECTION 2a: INITIALIZATION
+     * Initialize the semantic context manager on bot startup
+     * Performs cleanup of old messages and sets ready state
+     * @returns {boolean} - True if initialization successful
      */
     async initialize() {
         try {
@@ -38,7 +51,11 @@ class SemanticContextManager {
     }
 
     /**
-     * Store a user message
+     * SECTION 2b: STORE USER MESSAGE
+     * Stores a user message in the database for future AI context retrieval
+     * Also caches the message for quick access
+     * @param {Object} messageData - { discordMessageId, content, authorId, authorName, channelId, guildId }
+     * @returns {Object|null} - Stored message object or null on failure
      */
     async storeUserMessage(messageData) {
         const {
@@ -80,7 +97,11 @@ class SemanticContextManager {
     }
 
     /**
-     * Store an assistant response
+     * SECTION 2c: STORE ASSISTANT MESSAGE
+     * Stores an AI assistant response in the database
+     * Helps maintain conversation history for context
+     * @param {Object} messageData - { discordMessageId, content, channelId, guildId }
+     * @returns {Object|null} - Stored message object or null on failure
      */
     async storeAssistantMessage(messageData) {
         const {
@@ -120,7 +141,15 @@ class SemanticContextManager {
     }
 
     /**
-     * Get relevant context for a new message using text-based search
+     * SECTION 2d: CONTEXT RETRIEVAL (MAIN FUNCTION)
+     * Gets relevant conversation context for the current message
+     * Uses text similarity search + recent messages to build context
+     * This is the core function that makes the AI "remember" past conversations
+     * 
+     * @param {string} userInput - The current message to find context for
+     * @param {string} guildId - Discord server ID to search in
+     * @param {string|null} userId - Optional: filter by specific user
+     * @returns {Array} - Array of relevant context messages sorted by similarity
      */
     async getRelevantContext(userInput, guildId, userId = null) {
         try {
@@ -224,7 +253,10 @@ class SemanticContextManager {
     }
 
     /**
-     * Perform cleanup of old messages
+     * SECTION 2e: MAINTENANCE
+     * Deletes messages older than 30 days to prevent database bloat
+     * Should be called periodically (e.g., on bot startup)
+     * @returns {number} - Number of messages deleted
      */
     async performCleanup() {
         try {
@@ -239,7 +271,10 @@ class SemanticContextManager {
     }
 
     /**
-     * Get statistics about the context database
+     * SECTION 2f: STATISTICS
+     * Get database statistics for the /info command
+     * Returns counts of messages, channels, and embeddings
+     * @returns {Object|null} - { total_messages, user_messages, assistant_messages, unique_channels }
      */
     async getStatistics() {
         try {
@@ -265,7 +300,9 @@ class SemanticContextManager {
     }
 
     /**
-     * Check if the context manager is ready
+     * SECTION 2g: READY CHECK
+     * Check if the context manager is initialized and ready to use
+     * @returns {boolean} - True if ready, false otherwise
      */
     isReady() {
         return this.isInitialized;
