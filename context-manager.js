@@ -145,10 +145,10 @@ class SemanticContextManager {
      * Uses text similarity search + recent messages to build context
      * This is the core function that makes the AI "remember" past conversations
      */
-     async getRelevantContext(userInput, guildId, userId = null) {
+     async getRelevantContext(userInput, guildId = null, userId = null) {
         try {
             // Check cache first (include userId in cache key)
-            const cacheKey = `${guildId}_${userId || 'all'}_${Buffer.from(userInput).toString('base64')}`;
+            const cacheKey = `${guildId || 'all_guilds'}_${userId || 'all'}_${Buffer.from(userInput).toString('base64')}`;
             
             if (this.messageCache.has(cacheKey)) {
                 return this.messageCache.get(cacheKey);

@@ -211,22 +211,25 @@ export async function storeMessage(messageData) {
  * Searches for messages similar to the query using text search
  * Uses PostgreSQL ts_rank or SQLite FTS5 for full-text search
  */
-export async function findSimilarMessages(queryText, guildId, authorId = null, limit = 5) {
+export async function findSimilarMessages(queryText, guildId = null, authorId = null, limit = 5) {
     try {
         if (DB_TYPE === 'postgres') {
             let query = `
                 SELECT id, content, author_name, message_type, created_at,
                        ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) as similarity_score
                 FROM messages
-                WHERE guild_id = $2
-                AND to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+                WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
             `;
-            const values = [queryText, guildId, limit];
+            const values = [queryText, limit];
+            if (guildId) {
+                query += ` AND guild_id = $3`;
+                values.push(guildId);
+            }
             if (authorId) {
                 query += ` AND author_id = $4`;
                 values.push(authorId);
             }
-            query += ` ORDER BY similarity_score DESC, created_at DESC LIMIT $3`;
+            query += ` ORDER BY similarity_score DESC, created_at DESC LIMIT $2`;
             const result = await pgPool.query(query, values);
             return result.rows;
         } else {
@@ -235,9 +238,13 @@ export async function findSimilarMessages(queryText, guildId, authorId = null, l
                 SELECT m.id, m.content, m.author_name, m.message_type, m.created_at, rank as similarity_score
                 FROM messages m
                 JOIN messages_fts f ON m.id = f.rowid
-                WHERE m.guild_id = ? AND messages_fts MATCH ?
+                WHERE messages_fts MATCH ?
             `;
-            const params = [guildId, queryText];
+            const params = [queryText];
+            if (guildId) {
+                sql += ` AND m.guild_id = ?`;
+                params.push(guildId);
+            }
             if (authorId) {
                 sql += ` AND m.author_id = ?`;
                 params.push(authorId);
@@ -258,23 +265,31 @@ export async function findSimilarMessages(queryText, guildId, authorId = null, l
  * SECTION 5c: getRecentMessages()
  * Gets the most recent messages from a guild (for fallback context)
  */
-export async function getRecentMessages(guildId, authorId = null, limit = 10) {
+export async function getRecentMessages(guildId = null, authorId = null, limit = 10) {
     try {
         if (DB_TYPE === 'postgres') {
-            let query = `SELECT content, author_name, message_type, created_at FROM messages WHERE guild_id = $1`;
-            const values = [guildId, limit];
+            let query = `SELECT content, author_name, message_type, created_at FROM messages`;
+            const values = [limit];
+            if (guildId) {
+                query += ` WHERE guild_id = $2`;
+                values.push(guildId);
+            }
             if (authorId) {
-                query += ` AND author_id = $3`;
+                query += guildId ? ` AND author_id = $3` : ` WHERE author_id = $2`;
                 values.push(authorId);
             }
-            query += ` ORDER BY created_at DESC LIMIT $2`;
+            query += ` ORDER BY created_at DESC LIMIT $1`;
             const result = await pgPool.query(query, values);
             return result.rows;
         } else {
-            let sql = `SELECT content, author_name, message_type, created_at FROM messages WHERE guild_id = ?`;
-            const params = [guildId];
+            let sql = `SELECT content, author_name, message_type, created_at FROM messages`;
+            const params = [];
+            if (guildId) {
+                sql += ` WHERE guild_id = ?`;
+                params.push(guildId);
+            }
             if (authorId) {
-                sql += ` AND author_id = ?`;
+                sql += guildId ? ` AND author_id = ?` : ` WHERE author_id = ?`;
                 params.push(authorId);
             }
             sql += ` ORDER BY created_at DESC LIMIT ?`;
