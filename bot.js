@@ -57,6 +57,7 @@ const MOD_LOG_CHANNEL_ID     = process.env.MOD_LOG_CHANNEL_ID || null;
 // Spam detection thresholds (configurable via env)
 const SPAM_IMAGE_THRESHOLD   = parseInt(process.env.SPAM_IMAGE_THRESHOLD  || '4', 10);
 const SPAM_LINK_THRESHOLD    = parseInt(process.env.SPAM_LINK_THRESHOLD   || '4', 10);
+const SPAM_CHANNEL_THRESHOLD = parseInt(process.env.SPAM_CHANNEL_THRESHOLD || '3', 10);
 const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10); // 30s
 
 const START_TIME = Date.now();
@@ -699,7 +700,7 @@ async function detectImageSpam(message) {
   }
 
   // Trigger 1: threshold images sent across channels within the window
-  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size >= 1) {
+  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size >= SPAM_CHANNEL_THRESHOLD) {
     await handleSpamDetection(
       message,
       'image spam',
@@ -773,7 +774,7 @@ async function detectLinkSpam(message) {
   const uniqueChannels = new Set(tracking.links.map(entry => entry.channelId));
   const totalLinks     = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
 
-  if (totalLinks >= SPAM_LINK_THRESHOLD && uniqueChannels.size > 1) {
+  if (totalLinks >= SPAM_LINK_THRESHOLD && uniqueChannels.size >= SPAM_CHANNEL_THRESHOLD) {
     await handleSpamDetection(
       message,
       'link spam',
