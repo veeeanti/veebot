@@ -8,16 +8,12 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     author_id TEXT NOT NULL,
     author_name TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    guild_id TEXT,
     message_type TEXT DEFAULT 'user',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id);
-CREATE INDEX IF NOT EXISTS idx_messages_guild_id ON messages(guild_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_message_type ON messages(message_type);
 
@@ -49,14 +45,12 @@ CREATE TABLE IF NOT EXISTS memories (
     user_id TEXT NOT NULL,
     username TEXT NOT NULL,
     memory TEXT NOT NULL,
-    guild_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for memories
 CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
-CREATE INDEX IF NOT EXISTS idx_memories_guild_id ON memories(guild_id);
 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 
 -- Full-text search table for memories

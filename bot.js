@@ -60,6 +60,12 @@ const SPAM_LINK_THRESHOLD    = parseInt(process.env.SPAM_LINK_THRESHOLD   || '4'
 const SPAM_CHANNEL_THRESHOLD = parseInt(process.env.SPAM_CHANNEL_THRESHOLD || '3', 10);
 const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10); // 30s
 
+// Channels to ignore for spam detection (comma-separated channel IDs)
+const AUTOBAN_IGNORE_CHANNELS = (process.env.AUTOBAN_IGNORE_CHANNELS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(id => id.length > 0);
+
 const START_TIME = Date.now();
 let lastResponseTime = 0;
 let isSemanticMode = false;
@@ -546,8 +552,11 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
   // Run spam detection for ALL non-bot guild messages, regardless of other filters
   if (SPAM_DETECTION_ENABLED && message.guild && !message.author.bot) {
-    await detectImageSpam(message);
-    await detectLinkSpam(message);
+    // Skip spam detection in ignored channels
+    if (!AUTOBAN_IGNORE_CHANNELS.includes(message.channel.id)) {
+      await detectImageSpam(message);
+      await detectLinkSpam(message);
+    }
   }
 
   // Store all messages in database (regardless of semantic mode)
