@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS memories (
     user_id TEXT NOT NULL,
     username TEXT NOT NULL,
     guild_id VARCHAR(255),
+    channel_id VARCHAR(255),
     memory TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS memories (
 -- Indexes for memories
 CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_guild_id ON memories(guild_id);
+CREATE INDEX IF NOT EXISTS idx_memories_channel_id ON memories(channel_id);
 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 
 -- Full-text search table for memories
