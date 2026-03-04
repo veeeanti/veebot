@@ -701,26 +701,30 @@ async function detectImageSpam(message) {
   tracking.images = tracking.images.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
   tracking.images.push({ channelId: message.channel.id, imageCount, timestamp: now, messageId: message.id });
 
-  // Group images by channel and count totals per channel
-  const channelImageTotals = {};
-  for (const entry of tracking.images) {
-    if (!channelImageTotals[entry.channelId]) channelImageTotals[entry.channelId] = 0;
-    channelImageTotals[entry.channelId] += entry.imageCount;
-  }
-
-  // Count how many channels have 4+ images
-  const channelsWith4PlusImages = Object.values(channelImageTotals).filter(count => count >= SPAM_IMAGE_THRESHOLD).length;
+  const uniqueChannels = new Set(tracking.images.map(entry => entry.channelId));
+  const totalImages    = tracking.images.reduce((sum, entry) => sum + entry.imageCount, 0);
 
   if (DEBUG) {
-    console.log(`DEBUG [ImageSpam] ${message.author.tag}: ${tracking.images.length} image events, ${channelsWith4PlusImages} channel(s) with 4+ images`);
+    console.log(`DEBUG [ImageSpam] ${message.author.tag}: ${totalImages} images across ${uniqueChannels.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
   }
 
-  // Only trigger ban when 3+ channels have each sent 4+ images
-  if (channelsWith4PlusImages >= SPAM_CHANNEL_THRESHOLD) {
+  // Trigger 1: threshold images sent across channels within the window
+  if (totalImages >= SPAM_IMAGE_THRESHOLD && uniqueChannels.size >= SPAM_CHANNEL_THRESHOLD) {
     await handleSpamDetection(
       message,
       'image spam',
-      `Sent 4+ image(s) in ${channelsWith4PlusImages} different channels within ${SPAM_WINDOW_MS / 1000}s`
+      `Sent ${totalImages} image(s) across ${uniqueChannels.size} channels within ${SPAM_WINDOW_MS / 1000}s`
+    );
+    userSpamTracking.delete(userId);
+    return;
+  }
+
+  // Also trigger on rapid image spam in a single message (burst detection)
+  if (imageCount >= SPAM_IMAGE_THRESHOLD * 2) {
+    await handleSpamDetection(
+      message,
+      'image spam',
+      `Sent ${imageCount} image(s) in a single message (possible mass upload)`
     );
     userSpamTracking.delete(userId);
   }
@@ -747,26 +751,43 @@ async function detectLinkSpam(message) {
   tracking.links = tracking.links.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
   tracking.links.push({ channelId: message.channel.id, linkCount, timestamp: now, messageId: message.id });
 
-  // Group links by channel and count totals per channel
-  const channelLinkTotals = {};
-  for (const entry of tracking.links) {
-    if (!channelLinkTotals[entry.channelId]) channelLinkTotals[entry.channelId] = 0;
-    channelLinkTotals[entry.channelId] += entry.linkCount;
-  }
-
-  // Count how many channels have 4+ links
-  const channelsWith4PlusLinks = Object.values(channelLinkTotals).filter(count => count >= SPAM_LINK_THRESHOLD).length;
-
   if (DEBUG) {
-    console.log(`DEBUG [LinkSpam] ${message.author.tag}: ${tracking.links.length} link events, ${channelsWith4PlusLinks} channel(s) with 4+ links`);
+    const uniqueCh   = new Set(tracking.links.map(e => e.channelId));
+    const totalLinks = tracking.links.reduce((sum, e) => sum + e.linkCount, 0);
+    console.log(`DEBUG [LinkSpam] ${message.author.tag}: ${totalLinks} links across ${uniqueCh.size} channel(s) in last ${SPAM_WINDOW_MS / 1000}s`);
   }
 
-  // Only trigger ban when 3+ channels have each sent 4+ links
-  if (channelsWith4PlusLinks >= SPAM_CHANNEL_THRESHOLD) {
+  // Trigger 1: very high link count in a single message (mass-link blast)
+  if (linkCount >= SPAM_LINK_THRESHOLD * 2) {
     await handleSpamDetection(
       message,
       'link spam',
-      `Sent 4+ link(s) in ${channelsWith4PlusLinks} different channels within ${SPAM_WINDOW_MS / 1000}s`
+      `Sent ${linkCount} link(s) in a single message`
+    );
+    userSpamTracking.delete(userId);
+    return;
+  }
+
+  // Trigger 2: threshold links in a single message
+  if (linkCount >= SPAM_LINK_THRESHOLD) {
+    await handleSpamDetection(
+      message,
+      'link spam',
+      `Sent ${linkCount} link(s) in a single message`
+    );
+    userSpamTracking.delete(userId);
+    return;
+  }
+
+  // Trigger 3: threshold or more links spread across channels within the window
+  const uniqueChannels = new Set(tracking.links.map(entry => entry.channelId));
+  const totalLinks     = tracking.links.reduce((sum, entry) => sum + entry.linkCount, 0);
+
+  if (totalLinks >= SPAM_LINK_THRESHOLD && uniqueChannels.size >= SPAM_CHANNEL_THRESHOLD) {
+    await handleSpamDetection(
+      message,
+      'link spam',
+      `Sent ${totalLinks} link(s) across ${uniqueChannels.size} channels within ${SPAM_WINDOW_MS / 1000}s`
     );
     userSpamTracking.delete(userId);
   }
