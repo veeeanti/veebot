@@ -1,4 +1,8 @@
-﻿import {
+﻿/*════════════════════════════════════════════════════════════════════════════════*/
+/* This isn't even supposed to be here, but it breaks without it, so here we are. */
+/*════════════════════════════════════════════════════════════════════════════════*/
+
+import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,

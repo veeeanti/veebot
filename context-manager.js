@@ -2,7 +2,11 @@ import {
     storeMessage,
     findSimilarMessages,
     getRecentMessages,
-    cleanupOldMessages
+    cleanupOldMessages,
+    storeMemory,
+    getMemories,
+    searchMemories,
+    removeMemory
 } from './database.js';
 
 /*══════════════════════════════════════════════════════════════════════════*
@@ -141,7 +145,7 @@ class SemanticContextManager {
      * Uses text similarity search + recent messages to build context
      * This is the core function that makes the AI "remember" past conversations
      */
-    async getRelevantContext(userInput, guildId, userId = null) {
+     async getRelevantContext(userInput, guildId, userId = null) {
         try {
             // Check cache first (include userId in cache key)
             const cacheKey = `${guildId}_${userId || 'all'}_${Buffer.from(userInput).toString('base64')}`;
@@ -173,6 +177,24 @@ class SemanticContextManager {
                     if (DEBUG) {
                         console.log(`Found ${context.length} textually relevant messages`);
                         console.log(`   Average similarity: ${(context.reduce((sum, msg) => sum + msg.similarity, 0) / context.length).toFixed(3)}`);
+                    }
+                }
+
+                // Search for relevant memories
+                const relevantMemories = await searchMemories(userInput, userId, guildId, Math.floor(MAX_CONTEXT_MESSAGES / 4));
+                if (relevantMemories.length > 0) {
+                    const memoryContext = relevantMemories.map(memory => ({
+                        content: `[Memory] ${memory.memory}`,
+                        author: memory.username,
+                        type: 'memory',
+                        similarity: parseFloat(memory.similarity_score) || 0,
+                        timestamp: memory.created_at
+                    }));
+                    
+                    context = [...context, ...memoryContext];
+                    
+                    if (DEBUG) {
+                        console.log(`Found ${relevantMemories.length} relevant memories`);
                     }
                 }
             }
@@ -264,31 +286,97 @@ class SemanticContextManager {
      * Get database statistics for the /info command
      * Returns counts of messages, channels, and embeddings
      */
-    async getStatistics() {
+     async getStatistics() {
         try {
-            const client = require('./database.js').pool.connect();
+            const { DB_TYPE, pgPool, sqliteDb } = require('./database.js');
             
-            const result = await client.query(`
-                SELECT 
-                    COUNT(*) as total_messages,
-                    COUNT(CASE WHEN message_type = 'user' THEN 1 END) as user_messages,
-                    COUNT(CASE WHEN message_type = 'assistant' THEN 1 END) as assistant_messages,
-                    COUNT(CASE WHEN embedding IS NOT NULL THEN 1 END) as messages_with_embeddings,
-                    COUNT(DISTINCT channel_id) as unique_channels
-                FROM messages
-            `);
-
-            client.release();
-            
-            return result.rows[0];
+            if (DB_TYPE === 'postgres') {
+                const result = await pgPool.query(`
+                    SELECT 
+                        COUNT(*) as total_messages,
+                        COUNT(CASE WHEN message_type = 'user' THEN 1 END) as user_messages,
+                        COUNT(CASE WHEN message_type = 'assistant' THEN 1 END) as assistant_messages,
+                        COUNT(DISTINCT channel_id) as unique_channels
+                    FROM messages
+                `);
+                
+                return result.rows[0];
+            } else {
+                const result = sqliteDb.prepare(`
+                    SELECT 
+                        COUNT(*) as total_messages,
+                        COUNT(CASE WHEN message_type = 'user' THEN 1 END) as user_messages,
+                        COUNT(CASE WHEN message_type = 'assistant' THEN 1 END) as assistant_messages,
+                        COUNT(DISTINCT channel_id) as unique_channels
+                    FROM messages
+                `).get();
+                
+                return result;
+            }
         } catch (error) {
             console.error('Failed to get statistics:', error.message);
             return null;
         }
     }
 
+     /**
+     * SECTION 2g: STORE MEMORY
+     * Stores an explicit memory for a user
+     */
+    async storeMemory(userId, username, memory, guildId = null) {
+        try {
+            const result = await storeMemory(userId, username, memory, guildId);
+            return result;
+        } catch (error) {
+            console.error('Failed to store memory:', error.message);
+            return null;
+        }
+    }
+
     /**
-     * SECTION 2g: READY CHECK
+     * SECTION 2h: GET MEMORIES
+     * Retrieves all memories for a user
+     */
+    async getMemories(userId, guildId = null, limit = 20) {
+        try {
+            const memories = await getMemories(userId, guildId, limit);
+            return memories;
+        } catch (error) {
+            console.error('Failed to get memories:', error.message);
+            return [];
+        }
+    }
+
+    /**
+     * SECTION 2i: SEARCH MEMORIES
+     * Searches memories containing keywords
+     */
+    async searchMemories(queryText, userId = null, guildId = null, limit = 10) {
+        try {
+            const memories = await searchMemories(queryText, userId, guildId, limit);
+            return memories;
+        } catch (error) {
+            console.error('Failed to search memories:', error.message);
+            return [];
+        }
+    }
+
+    /**
+     * SECTION 2j: REMOVE MEMORY
+     * Deletes a specific memory by ID
+     */
+    async removeMemory(memoryId, userId) {
+        try {
+            const success = await removeMemory(memoryId, userId);
+            return success;
+        } catch (error) {
+            console.error('Failed to remove memory:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * SECTION 2k: READY CHECK
      * Check if the context manager is initialized and ready to use
      */
     isReady() {

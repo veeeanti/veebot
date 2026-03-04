@@ -14,8 +14,8 @@ import path from 'path';
 const DB_TYPE = process.env.DATABASE_TYPE || 'sqlite'; // Default to sqlite for local storage
 const SQLITE_PATH = process.env.SQLITE_PATH || './database.sqlite';
 
-let pgPool = null;
-let sqliteDb = null;
+export let pgPool = null;
+export let sqliteDb = null;
 
 // Initialize connection based on type
 if (DB_TYPE === 'postgres') {
@@ -310,7 +310,167 @@ export async function cleanupOldMessages(daysOld = 30) {
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
- * SECTION 6: BIRTHDAY FUNCTIONS
+ * SECTION 6: MEMORIES FUNCTIONS
+ * Store, retrieve, and manage explicit user memories
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+/*
+ * SECTION 6a: storeMemory()
+ * Stores an explicit memory for a user (across all channels)
+ */
+export async function storeMemory(userId, username, memory, guildId = null) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `
+                INSERT INTO memories (user_id, username, memory, guild_id)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, created_at
+            `;
+            const values = [userId, username, memory, guildId || null];
+            const result = await pgPool.query(query, values);
+            return result.rows[0];
+        } else {
+            const stmt = sqliteDb.prepare(`
+                INSERT INTO memories (user_id, username, memory, guild_id)
+                VALUES (?, ?, ?, ?)
+            `);
+            const info = stmt.run(userId, username, memory, guildId || null);
+            const row = sqliteDb.prepare('SELECT id, created_at FROM memories WHERE id = ?').get(info.lastInsertRowid);
+            return row;
+        }
+    } catch (error) {
+        console.error('Failed to store memory:', error.message);
+        return null;
+    }
+}
+
+/*
+ * SECTION 6b: getMemories()
+ * Retrieves all memories for a user
+ */
+export async function getMemories(userId, guildId = null, limit = 20) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            let query = `
+                SELECT id, memory, created_at
+                FROM memories
+                WHERE user_id = $1
+            `;
+            const values = [userId, limit];
+            
+            if (guildId) {
+                query += ` AND guild_id = $3`;
+                values.push(guildId);
+            }
+            
+            query += ` ORDER BY created_at DESC LIMIT $2`;
+            const result = await pgPool.query(query, values);
+            return result.rows;
+        } else {
+            let sql = `
+                SELECT id, memory, created_at
+                FROM memories
+                WHERE user_id = ?
+            `;
+            const params = [userId];
+            
+            if (guildId) {
+                sql += ` AND guild_id = ?`;
+                params.push(guildId);
+            }
+            
+            sql += ` ORDER BY created_at DESC LIMIT ?`;
+            params.push(limit);
+            
+            return sqliteDb.prepare(sql).all(...params);
+        }
+    } catch (error) {
+        console.error('Failed to get memories:', error.message);
+        return [];
+    }
+}
+
+/*
+ * SECTION 6c: searchMemories()
+ * Searches memories containing keywords (across all channels)
+ */
+export async function searchMemories(queryText, userId = null, guildId = null, limit = 10) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            let query = `
+                SELECT id, user_id, username, memory, created_at,
+                       ts_rank(to_tsvector('english', memory), plainto_tsquery('english', $1)) as similarity_score
+                FROM memories
+                WHERE to_tsvector('english', memory) @@ plainto_tsquery('english', $1)
+            `;
+            const values = [queryText, limit];
+            
+            if (userId) {
+                query += ` AND user_id = $3`;
+                values.push(userId);
+            }
+            
+            if (guildId) {
+                query += ` AND guild_id = $4`;
+                values.push(guildId);
+            }
+            
+            query += ` ORDER BY similarity_score DESC, created_at DESC LIMIT $2`;
+            const result = await pgPool.query(query, values);
+            return result.rows;
+        } else {
+            let sql = `
+                SELECT m.id, m.user_id, m.username, m.memory, m.created_at, rank as similarity_score
+                FROM memories m
+                JOIN memories_fts f ON m.id = f.rowid
+                WHERE memories_fts MATCH ?
+            `;
+            const params = [queryText];
+            
+            if (userId) {
+                sql += ` AND m.user_id = ?`;
+                params.push(userId);
+            }
+            
+            if (guildId) {
+                sql += ` AND m.guild_id = ?`;
+                params.push(guildId);
+            }
+            
+            sql += ` ORDER BY rank LIMIT ?`;
+            params.push(limit);
+            
+            return sqliteDb.prepare(sql).all(...params);
+        }
+    } catch (error) {
+        console.error('Failed to search memories:', error.message);
+        return [];
+    }
+}
+
+/*
+ * SECTION 6d: removeMemory()
+ * Deletes a specific memory by ID
+ */
+export async function removeMemory(memoryId, userId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `DELETE FROM memories WHERE id = $1 AND user_id = $2`;
+            const result = await pgPool.query(query, [memoryId, userId]);
+            return result.rowCount > 0;
+        } else {
+            const stmt = sqliteDb.prepare(`DELETE FROM memories WHERE id = ? AND user_id = ?`);
+            const info = stmt.run(memoryId, userId);
+            return info.changes > 0;
+        }
+    } catch (error) {
+        console.error('Failed to remove memory:', error.message);
+        return false;
+    }
+}
+
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 7: BIRTHDAY FUNCTIONS
  * Store, retrieve, and manage user birthdays for birthday announcements
  * ───────────────────────────────────────────────────────────────────────────────*/
 

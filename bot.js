@@ -235,6 +235,7 @@ const commands = [
     integration_types: [0, 1],
     contexts: [0, 1, 2],
   },
+
   {
     name: 'stats',
     description: 'Show server statistics',
@@ -362,6 +363,22 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
         channelId,
         guildId,
       });
+
+      // Automatically store important memories from user messages
+      const importantKeywords = ['remember', 'remember that', 'don\'t forget', 'important', 'crucial', 'key', 'vital'];
+      const lowerInput = userInput.toLowerCase();
+      
+      if (importantKeywords.some(keyword => lowerInput.includes(keyword))) {
+        const memoryContent = userInput.replace(new RegExp(`(${importantKeywords.join('|')})`, 'gi'), '').trim();
+        if (memoryContent.length > 5) {
+          await semanticContextManager.storeMemory(
+            authorId,
+            authorName,
+            memoryContent,
+            guildId
+          );
+        }
+      }
     }
 
     return reply;
@@ -503,9 +520,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'help':
         await handleHelpSlashCommand(interaction);
         break;
-      case 'birthday':
-        await handleBirthdaySlashCommand(interaction);
-        break;
+       case 'birthday':
+         await handleBirthdaySlashCommand(interaction);
+         break;
       default:
         await interaction.reply({ content: '❓ Unknown command.' });
     }
@@ -1051,7 +1068,7 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
       { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
-      { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
+       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
@@ -1230,6 +1247,76 @@ async function handleBirthdaySlashCommand(interaction) {
       await interaction.reply({ content: `❌ ${userStr}` });
     }
   }
+}
+
+/** /remember — store a memory */
+async function handleRememberSlashCommand(interaction) {
+  const memory = interaction.options.getString('memory');
+
+  if (!ENABLE_DATABASE) {
+    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
+  }
+
+  const result = await semanticContextManager.storeMemory(
+    interaction.user.id,
+    interaction.user.username,
+    memory,
+    interaction.guildId
+  );
+
+  if (result) {
+    await interaction.reply({ content: `✅ I'll remember that: **${memory}**` });
+  } else {
+    await interaction.reply({ content: '❌ Failed to store memory. Please try again later.' });
+  }
+}
+
+/** /forget — remove a memory */
+async function handleForgetSlashCommand(interaction) {
+  const memoryId = interaction.options.getInteger('memory_id');
+
+  if (!ENABLE_DATABASE) {
+    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
+  }
+
+  const success = await semanticContextManager.removeMemory(memoryId, interaction.user.id);
+
+  if (success) {
+    await interaction.reply({ content: '✅ Memory forgotten' });
+  } else {
+    await interaction.reply({ content: '❌ Failed to forget memory. Make sure you own this memory and the ID is correct.' });
+  }
+}
+
+/** /memories — list user's memories */
+async function handleMemoriesSlashCommand(interaction) {
+  if (!ENABLE_DATABASE) {
+    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
+  }
+
+  const memories = await semanticContextManager.getMemories(
+    interaction.user.id,
+    interaction.guildId
+  );
+
+  if (memories.length === 0) {
+    return interaction.reply({ content: 'ℹ️ You have no stored memories' });
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📝 Your Memories')
+    .setColor(0x5865f2)
+    .setFooter({ text: `Total memories: ${memories.length}` })
+    .setTimestamp();
+
+  memories.forEach(memory => {
+    embed.addFields({
+      name: `ID: ${memory.id} • ${new Date(memory.created_at).toLocaleDateString()}`,
+      value: memory.memory
+    });
+  });
+
+  await interaction.reply({ embeds: [embed] });
 }
 
 /*══════════════════════════════════════════════════════════════════════════*

@@ -43,6 +43,49 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
   INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
 
+-- Memories table for explicit user memories
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    memory TEXT NOT NULL,
+    guild_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for memories
+CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
+CREATE INDEX IF NOT EXISTS idx_memories_guild_id ON memories(guild_id);
+CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
+
+-- Full-text search table for memories
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    memory,
+    content='memories',
+    content_rowid='id'
+);
+
+-- Triggers to keep the FTS index in sync with the memories table
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memories_fts(rowid, memory) VALUES (new.id, new.memory);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, memory) VALUES('delete', old.id, old.memory);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, memory) VALUES('delete', old.id, old.memory);
+  INSERT INTO memories_fts(rowid, memory) VALUES (new.id, new.memory);
+END;
+
+-- Trigger to automatically update updated_at on memories
+CREATE TRIGGER IF NOT EXISTS update_memories_updated_at AFTER UPDATE ON memories
+BEGIN
+    UPDATE memories SET updated_at = CURRENT_TIMESTAMP WHERE id = old.id;
+END;
+
 -- Birthdays table
 CREATE TABLE IF NOT EXISTS birthdays (
     user_id TEXT PRIMARY KEY,
