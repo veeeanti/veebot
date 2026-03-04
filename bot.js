@@ -553,7 +553,7 @@ client.on('messageCreate', async (message) => {
   if (ENABLE_DATABASE) {
     try {
       await storeMessage({
-        discord_message_id: message.id,
+        discordMessageId: message.id,
         content: message.content,
         authorId: message.author.id,
         authorName: message.author.username,
