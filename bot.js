@@ -42,7 +42,6 @@ const CHANNEL_ID             = process.env.CHANNEL_ID;
 const LOCAL                  = process.env.LOCAL === 'true';
 const AI_MODEL               = process.env.AI_MODEL;
 const OPENROUTER_API_KEY     = process.env.OPENROUTER_API_KEY;
-const OLLAMA_BASE_URL        = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
 const PROMPT                 = process.env.PROMPT || '';
 const DEBUG                  = process.env.DEBUG === 'true';
@@ -321,17 +320,7 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     let reply = '';
 
     if (LOCAL) {
-      // Use Ollama for local inference
-      const ollamaResponse = await axios.post(
-        `${OLLAMA_BASE_URL}/api/generate`,
-        {
-          model: AI_MODEL || 'llama2',
-          prompt: promptText,
-          stream: false,
-        },
-        { timeout: 120000 }
-      );
-      reply = ollamaResponse.data.response || '';
+      throw new Error('Local model not supported in Node.js version.');
     } else {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
