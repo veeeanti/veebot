@@ -324,6 +324,7 @@ export async function storeMemory(userId, username, memory, guildId = null) {
             const query = `
                 INSERT INTO memories (user_id, username, memory, guild_id)
                 VALUES ($1, $2, $3, $4)
+                ON CONFLICT DO NOTHING
                 RETURNING id, created_at
             `;
             const values = [userId, username, memory, guildId || null];

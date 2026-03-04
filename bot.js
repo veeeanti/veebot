@@ -25,7 +25,8 @@ import {
   getBirthday,
   removeBirthday,
   getTodaysBirthdays,
-  markBirthdayAsPinged
+  markBirthdayAsPinged,
+  storeMessage
 } from './database.js';
 import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
@@ -345,8 +346,8 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     if (!reply || reply.length < 3) reply = 'Your weak words echo in the void.';
     if (DEBUG) console.log('DEBUG: Final reply:', reply);
 
-    // Store messages in database if semantic mode is enabled
-    if (isSemanticMode && discordMessageId && authorId && authorName) {
+    // Store messages in database if database is enabled
+    if (ENABLE_DATABASE && discordMessageId && authorId && authorName) {
       await semanticContextManager.storeUserMessage({
         discordMessageId,
         content: userInput,
@@ -547,6 +548,25 @@ client.on('messageCreate', async (message) => {
     await detectImageSpam(message);
     await detectLinkSpam(message);
   }
+
+  // Store all messages in database (regardless of semantic mode)
+  if (ENABLE_DATABASE) {
+    try {
+      await storeMessage({
+        discord_message_id: message.id,
+        content: message.content,
+        authorId: message.author.id,
+        authorName: message.author.username,
+        channelId: message.channel.id,
+        guildId: message.guild?.id,
+        messageType: 'user'
+      });
+    } catch (error) {
+      logger.error(`Failed to store message: ${error.message}`);
+    }
+  }
+
+  if (!shouldProcessMessage(message)) return;
 
   if (!shouldProcessMessage(message)) return;
 
