@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 -- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id);
+CREATE INDEX IF NOT EXISTS idx_messages_guild_id ON messages(guild_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_message_type ON messages(message_type);
 
