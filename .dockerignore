@@ -1,0 +1,56 @@
+# Dependencies
+node_modules
+.pnpm-store
+pnpm-store
+
+# Build artifacts
+dist
+build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Database files (will be mounted/managed externally)
+*.sqlite
+*.sqlite3
+*.db
+
+# Environment files (use env vars in container)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Test files
+coverage
+*.test.js
+*.spec.js
+__tests__
+
+# Documentation
+README.md
+USAGE_EXAMPLES.md
+SLASH_COMANDS_SETUP.md
+*.md
+
+# Temp files
+tmp
+temp
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
