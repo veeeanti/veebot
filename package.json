@@ -8,7 +8,8 @@
     "start": "node bot.js",
     "dev": "nodemon bot.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "setup-db": "node setup-db.js"
+    "setup-db": "node setup-db.js",
+    "primeit": "pnpm run setup-db && pnpm run start"
   },
   "keywords": [
     "discord",
