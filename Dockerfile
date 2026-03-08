@@ -61,9 +61,9 @@ EXPOSE 3000
 ENV NODE_ENV=production
 ENV ENABLE_DATABASE=true
 
-# Health check - check if node process is running
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD pgrep -x node || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1))" || exit 0
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
