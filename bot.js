@@ -84,6 +84,8 @@ const config = {
     "I'm just doing this to learn pretty much.",
     'meow',
     'welcome to the machine',
+    "ＬＥＴ＇Ｓ ＡＬＬ ＬＯＶＥ ＬＡＩＮ",
+    "ＧｏＤ_Ｉｓ_ｉＮ_ｔＨｅ_ＷｉＲｅＤ",
   ],
 };
 
@@ -528,9 +530,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'help':
         await handleHelpSlashCommand(interaction);
         break;
-       case 'birthday':
-         await handleBirthdaySlashCommand(interaction);
-         break;
+      case 'birthday':
+        await handleBirthdaySlashCommand(interaction);
+        break;
       default:
         await interaction.reply({ content: '❓ Unknown command.' });
     }
@@ -578,8 +580,6 @@ client.on('messageCreate', async (message) => {
 
   if (!shouldProcessMessage(message)) return;
 
-  if (!shouldProcessMessage(message)) return;
-
   // Legacy prefix commands
   if (message.content.startsWith(config.prefix)) {
     const args = message.content.slice(config.prefix.length).trim().split(/ +/);
@@ -604,7 +604,7 @@ client.on('messageCreate', async (message) => {
           break;
         case 'stats':
           await handleStatsSlashCommand(message);
-         break;
+          break;
         case 'help':
           await handleHelpSlashCommand(message);
           break;
@@ -1077,7 +1077,7 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
       { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
-       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
+      { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )

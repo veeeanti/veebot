@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS messages (
     author_id TEXT NOT NULL,
     author_name TEXT NOT NULL,
     message_type TEXT DEFAULT 'user',
+    guild_id VARCHAR(255),
+    channel_id VARCHAR(255),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
