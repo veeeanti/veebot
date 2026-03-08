@@ -1203,8 +1203,8 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📊 `/stats`',          value: 'Display server statistics (members, channels, roles, etc.).' },
       { name: '🏓 `/ping`',           value: 'Check the bot\'s latency and WebSocket heartbeat.' },
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
-      { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
-      { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
+      { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Year is optional, Admins / Mods can set for others).' },
+      { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove your stored birthday (Admins / Mods can view others\').' },
       { name: '🎂 `/birthday test [day] [month]`', value: 'Test birthday pings (Admin only).' },
       { name: '🎂 `/birthday send`', value: 'Send today\'s birthday pings to all servers (Admin only).' },
       { name: '🎂 `/birthday channel set #channel`', value: 'Set birthday channel (Admin only).' },
@@ -1327,7 +1327,7 @@ async function handleBirthdaySlashCommand(interaction) {
     
     if (!isAdmin) {
       return interaction.reply({
-        content: '❌ Only Administrators can run the birthday test command.'
+        content: '❌ Only Administrators can run the birthday test command. This will be removed soon anyways.'
       });
     }
 
@@ -1398,7 +1398,7 @@ async function handleBirthdaySlashCommand(interaction) {
       if (channelId) {
         await interaction.reply({ content: `📢 The birthday channel for this server is set to <#${channelId}>` });
       } else {
-        await interaction.reply({ content: '📢 No birthday channel is set for this server. Use `/birthday channel set` to configure one.' });
+        await interaction.reply({ content: '📢 No birthday channel is set for this server. Use `/birthday channel set` to configure one. Otherwise, it will use the "welcome" channel.' });
       }
       return;
     }
@@ -1710,7 +1710,7 @@ async function searchGoogleForUnionCraxGames(query) {
 
     return topGame;
   } catch (error) {
-    logger.error(`Google search for UnionCrax games failed: ${error.message}`);
+    logger.error(`Searching for UnionCrax games failed: ${error.message}`);
     return null;
   }
 }
@@ -1769,8 +1769,9 @@ async function searchUnionCraxGames(query) {
         title:         `${game.name} - Free Download on UnionCrax`,
         url:           `${UNION_CRAX_API_BASE}/game/${encodeURIComponent(game.appid || game.id || '')}`,
         description:   game.description || 'No description available',
-        source:        'UnionCrax',
+        source:        game.source || 'UnionCrax',
         downloadCount: stats.downloads || stats.download_count || stats.count || 0,
+        viewCount:     stats.views || stats.view_count || 0,
         size:          game.size || 'Unknown',
       };
     });
