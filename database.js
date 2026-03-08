@@ -1,4 +1,4 @@
-﻿/*══════════════════════════════════════════════════════════════════════════*
+/*══════════════════════════════════════════════════════════════════════════*
  * DATABASE - SQLite/PostgreSQL Connection Manager
  * Handles all database operations: messages, birthdays, context storage
  * Supports both PostgreSQL (server) and SQLite (local file)

@@ -47,6 +47,7 @@ const CHANNEL_ID             = process.env.CHANNEL_ID;
 const LOCAL                  = process.env.LOCAL === 'true';
 const AI_MODEL               = process.env.AI_MODEL;
 const OPENROUTER_API_KEY     = process.env.OPENROUTER_API_KEY;
+const VISION_MODEL           = process.env.VISION_MODEL || 'anthropic/claude-3-haiku';
 const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
 const PROMPT                 = process.env.PROMPT || '';
 const DEBUG                  = process.env.DEBUG === 'true';
@@ -350,10 +351,62 @@ async function registerSlashCommands() {
  * SECTION 6: AI RESPONSE GENERATION
  * Handles AI-powered responses using OpenRouter API
  * Includes semantic context retrieval for smarter responses
+ * Supports vision for image attachments
  * ───────────────────────────────────────────────────────────────────────────────*/
-async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName) {
+
+/**
+ * Download and process image attachments for AI vision
+ * @param {Collection} attachments - Discord message attachments
+ * @returns {Array} Array of image URLs or base64 data
+ */
+async function processImageAttachments(attachments) {
+  const imageUrls = [];
+  
+  if (!attachments || attachments.size === 0) return imageUrls;
+
+  const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  
+  for (const attachment of attachments.values()) {
+    if (attachment.contentType && imageTypes.includes(attachment.contentType)) {
+      // For vision models, we can use the proxy URL
+      imageUrls.push({
+        url: attachment.proxyURL || attachment.url,
+        filename: attachment.filename
+      });
+    }
+  }
+  
+  return imageUrls;
+}
+
+async function generateAMResponse(userInput, channelId, guildId, discordMessageId, authorId, authorName, attachments = null) {
   try {
     let contextText = '';
+    let hasImages = false;
+
+    // Process image attachments if any
+    const imageAttachments = await processImageAttachments(attachments);
+    hasImages = imageAttachments.length > 0;
+
+    // Get channel conversation context for multi-person chats
+    let channelContextText = '';
+    if (channelId && isSemanticMode && semanticContextManager.isReady()) {
+      const channelMessages = await semanticContextManager.getChannelContext(channelId, 10);
+      
+      // Only include channel context if there are multiple different users
+      const uniqueAuthors = new Set(channelMessages.map(m => m.authorId));
+      if (uniqueAuthors.size > 1) {
+        channelMessages.forEach((msg) => {
+          if (msg.authorId !== authorId && msg.authorId !== 'assistant') {
+            channelContextText += `${msg.author}: ${msg.content}\n`;
+          }
+        });
+        
+        if (DEBUG && channelContextText) {
+          console.log(`🔍 Using channel context: ${channelMessages.length} messages from ${uniqueAuthors.size} users`);
+        }
+      }
+    }
 
     if (isSemanticMode && semanticContextManager.isReady()) {
       const relevantContext = await semanticContextManager.getRelevantContext(userInput, guildId, authorId);
@@ -369,23 +422,60 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
       }
     }
 
-    const promptText = `${PROMPT}\n\n${contextText}Human: ${userInput}\nAM:`;
+    // Build prompt with context
+    let promptText = PROMPT;
+    
+    // Add channel context for group conversations
+    if (channelContextText) {
+      promptText += `\n\nRecent conversation in this channel:\n${channelContextText}`;
+    }
+    
+    // Add user context
+    if (contextText) {
+      promptText += `\n\n${contextText}`;
+    }
+    
+    promptText += `\nHuman: ${userInput}\nAM:`;
 
     let reply = '';
+    
+    // Determine which model to use - vision model if images present
+    const modelToUse = hasImages ? VISION_MODEL : AI_MODEL;
 
     if (LOCAL) {
       throw new Error('Local model not supported in Node.js version.');
     } else {
+      // Build messages array - handle vision vs regular
+      const messages = [];
+      
+      if (hasImages) {
+        // Build user message with image content
+        const userMessageContent = [
+          { type: 'text', text: `${promptText}\nKeep your response under 3 sentences.` }
+        ];
+        
+        // Add image URLs to the message
+        for (const img of imageAttachments) {
+          userMessageContent.push({
+            type: 'image_url',
+            image_url: { url: img.url }
+          });
+        }
+        
+        messages.push({ role: 'system', content: PROMPT });
+        messages.push({ role: 'user', content: userMessageContent });
+      } else {
+        messages.push({ role: 'system', content: PROMPT });
+        messages.push({ role: 'user', content: `${promptText}\nKeep your response under 3 sentences.` });
+      }
+
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: AI_MODEL,
-          messages: [
-            { role: 'system', content: PROMPT },
-            { role: 'user', content: `${promptText}\nKeep your response under 3 sentences.` },
-          ],
+          model: modelToUse,
+          messages: messages,
           temperature: 0.7,
-          max_tokens: 120,
+          max_tokens: hasImages ? 300 : 120,
         },
         {
           headers: {
@@ -713,7 +803,8 @@ client.on('messageCreate', async (message) => {
       message.guild?.id,
       message.id,
       message.author.id,
-      message.author.username
+      message.author.username,
+      message.attachments
     );
 
     const wordCount = reply.split(/\s+/).length;

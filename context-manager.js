@@ -2,6 +2,7 @@ import {
     storeMessage,
     findSimilarMessages,
     getRecentMessages,
+    getChannelMessages,
     cleanupOldMessages,
     storeMemory,
     getMemories,
@@ -376,7 +377,32 @@ class SemanticContextManager {
     }
 
     /**
-     * SECTION 2k: READY CHECK
+     * SECTION 2k: GET CHANNEL CONVERSATION CONTEXT
+     * Gets conversation history from a channel for multi-person chats
+     * This helps the AI understand the flow of conversation between multiple users
+     */
+    async getChannelContext(channelId, limit = 15) {
+        try {
+            const messages = await getChannelMessages(channelId, limit);
+            
+            // Reverse to get chronological order (oldest first)
+            const chronologicalMessages = messages.reverse();
+            
+            return chronologicalMessages.map(msg => ({
+                content: msg.content,
+                author: msg.author_name,
+                authorId: msg.author_id,
+                type: msg.message_type,
+                timestamp: msg.created_at
+            }));
+        } catch (error) {
+            console.error('Failed to get channel context:', error.message);
+            return [];
+        }
+    }
+
+    /**
+     * SECTION 2l: READY CHECK
      * Check if the context manager is initialized and ready to use
      */
     isReady() {
