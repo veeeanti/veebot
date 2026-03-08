@@ -249,7 +249,7 @@ const commands = [
       {
         name: 'channel',
         description: 'Set or remove the birthday announcement channel (admin only)',
-        type: 1, // SUB_COMMAND
+        type: 2, // SUB_COMMAND_GROUP
         options: [
           {
             name: 'set',
@@ -1222,7 +1222,8 @@ async function handleHelpSlashCommand(interaction) {
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
       { name: '🎂 `/birthday test [day] [month]`', value: 'Test birthday pings (Admin only).' },
       { name: '🎂 `/birthday send`', value: 'Send today\'s birthday pings to all servers (Admin only).' },
-      { name: '🎂 `/birthday channel set|get|remove`', value: 'Manage birthday channel per server (Admin only).' },
+      { name: '🎂 `/birthday channel set #channel`', value: 'Set birthday channel (Admin only).' },
+      { name: '🎂 `/birthday channel get|remove`', value: 'View or remove birthday channel (Admin only).' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
@@ -1388,8 +1389,8 @@ async function handleBirthdaySlashCommand(interaction) {
     return;
   }
 
-  // Handle /birthday channel set/remove/get
-  if (subcommand === 'channel') {
+  // Handle /birthday channel set/remove/get (subcommand group)
+  if (subcommandGroup === 'channel') {
     const member = interaction.member;
     const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
     
@@ -1403,11 +1404,8 @@ async function handleBirthdaySlashCommand(interaction) {
       return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
     }
 
-    // Get the nested subcommand (set, remove, or get)
-    const channelSubcommand = interaction.options.getSubcommand();
-
     // Handle /birthday channel get
-    if (channelSubcommand === 'get') {
+    if (subcommand === 'get') {
       const guildId = interaction.guildId;
       const channelId = await getBirthdayChannel(guildId);
       
@@ -1420,7 +1418,7 @@ async function handleBirthdaySlashCommand(interaction) {
     }
 
     // Handle /birthday channel set <channel>
-    if (channelSubcommand === 'set') {
+    if (subcommand === 'set') {
       const channel = interaction.options.getChannel('channel');
       
       if (!channel || !channel.isTextBased()) {
@@ -1438,7 +1436,7 @@ async function handleBirthdaySlashCommand(interaction) {
     }
 
     // Handle /birthday channel remove
-    if (channelSubcommand === 'remove') {
+    if (subcommand === 'remove') {
       const success = await removeBirthdayChannel(interaction.guildId);
       
       if (success) {
