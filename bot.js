@@ -11,6 +11,9 @@ import {
   Routes,
   PermissionFlagsBits,
   MessageFlags,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
 } from 'discord.js';
 import axios from 'axios';
 import { load } from 'cheerio';
@@ -1235,13 +1238,27 @@ async function handleSearchSlashCommand(interaction) {
         .setDescription(unionCraxResult.description || 'No description available')
         .addFields(
           { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
+          { name: '👁️ Views',    value: unionCraxResult.viewCount ? String(unionCraxResult.viewCount) : 'N/A',    inline: true },
           { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
           { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
         )
         .setTimestamp()
         .setFooter({ text: 'Game search result from UnionCrax' });
 
-      await interaction.editReply({ embeds: [embed] });
+      // Create action buttons
+      const gameButton = new ButtonBuilder()
+        .setLabel('🎮 Download Game')
+        .setStyle(ButtonStyle.Link)
+        .setURL(unionCraxResult.url);
+
+      const siteButton = new ButtonBuilder()
+        .setLabel('🌐 Visit UnionCrax')
+        .setStyle(ButtonStyle.Link)
+        .setURL('https://union-crax.xyz');
+
+      const actionRow = new ActionRowBuilder().addComponents(gameButton, siteButton);
+
+      await interaction.editReply({ embeds: [embed], components: [actionRow] });
     } else {
       await interaction.editReply(`🔍 No matching games found on UnionCrax for: **${query}**`);
     }
@@ -1600,13 +1617,27 @@ async function handleSearchCommand(message, args) {
         .setDescription(unionCraxResult.description || 'No description available')
         .addFields(
           { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
+          { name: '👁️ Views',    value: unionCraxResult.viewCount ? String(unionCraxResult.viewCount) : 'N/A',    inline: true },
           { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
           { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
         )
         .setTimestamp()
         .setFooter({ text: 'Game search result from UnionCrax' });
 
-      await message.channel.send({ embeds: [embed] });
+      // Create action buttons
+      const gameButton = new ButtonBuilder()
+        .setLabel('🎮 Download Game')
+        .setStyle(ButtonStyle.Link)
+        .setURL(unionCraxResult.url);
+
+      const siteButton = new ButtonBuilder()
+        .setLabel('🌐 Visit UnionCrax')
+        .setStyle(ButtonStyle.Link)
+        .setURL('https://union-crax.xyz');
+
+      const actionRow = new ActionRowBuilder().addComponents(gameButton, siteButton);
+
+      await message.channel.send({ embeds: [embed], components: [actionRow] });
     } else {
       await searchMessage.edit(`🔍 No matching games found on UnionCrax for: **${query}**`);
     }
@@ -1703,7 +1734,7 @@ async function searchGoogleForUnionCraxGames(query) {
         title:         topGame.title,
         url:           topGame.url,
         description:   topGame.description,
-        source:        'union-crax.xyz',
+        source:        topGame.source || 'UnionCrax',
         downloadCount: topGame.downloadCount,
         size:          topGame.size,
       };
