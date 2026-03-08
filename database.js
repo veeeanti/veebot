@@ -324,6 +324,40 @@ export async function cleanupOldMessages(daysOld = 30) {
     }
 }
 
+/*
+ * SECTION 5e: getChannelMessages()
+ * Gets messages from a specific channel for conversation context
+ */
+export async function getChannelMessages(channelId, limit = 15) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `
+                SELECT id, discord_message_id, content, author_id, author_name, 
+                       channel_id, guild_id, message_type, created_at
+                FROM messages
+                WHERE channel_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            `;
+            const result = await pgPool.query(query, [channelId, limit]);
+            return result.rows;
+        } else {
+            const sql = `
+                SELECT id, discord_message_id, content, author_id, author_name, 
+                       channel_id, guild_id, message_type, created_at
+                FROM messages
+                WHERE channel_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            `;
+            return sqliteDb.prepare(sql).all(channelId, limit);
+        }
+    } catch (error) {
+        console.error('Failed to get channel messages:', error.message);
+        return [];
+    }
+}
+
 /*══════════════════════════════════════════════════════════════════════════*
  * SECTION 6: MEMORIES FUNCTIONS
  * Store, retrieve, and manage explicit user memories
