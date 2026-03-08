@@ -88,6 +88,9 @@ const config = {
     'welcome to the machine',
     "ＬＥＴ＇Ｓ ＡＬＬ ＬＯＶＥ ＬＡＩＮ",
     "ＧｏＤ_Ｉｓ_ｉＮ_ｔＨｅ_ＷｉＲｅＤ",
+    "Check out union-crax.xyz!",
+    "I am not a cat.",
+    "Check out vee-anti.xyz!",
   ],
 };
 
@@ -156,12 +159,12 @@ const commands = [
     options: [
       {
         name: 'set',
-        description: 'Set your birthday or a user\'s birthday (Admins/Mods only)',
+        description: 'Set your birthday to get pinged on your bday!',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'month',
-            description: 'The month of the birthday (1-12)',
+            description: 'Month - XX (What month were you born in?)',
             type: 4, // INTEGER
             required: true,
             min_value: 1,
@@ -169,7 +172,7 @@ const commands = [
           },
           {
             name: 'day',
-            description: 'The day of the birthday (1-31)',
+            description: 'Day - XX (What day were you born on?)',
             type: 4, // INTEGER
             required: true,
             min_value: 1,
@@ -177,15 +180,15 @@ const commands = [
           },
           {
             name: 'year',
-            description: 'The year of the birthday (optional)',
+            description: 'Year - XXXX (optional, only to say something like "happy 300th birthday!" if wanted)',
             type: 4, // INTEGER
             required: false,
-            min_value: 1900,
+            min_value: 100,
             max_value: new Date().getFullYear(),
           },
           {
             name: 'user',
-            description: 'The user to set the birthday for (Admins/Mods only)',
+            description: 'Set someone else\'s birthday (Admins/Mods only)',
             type: 6, // USER
             required: false,
           },
@@ -193,12 +196,12 @@ const commands = [
       },
       {
         name: 'remove',
-        description: 'Remove your birthday or a user\'s birthday (Admins/Mods only)',
+        description: 'Remove your birthday from the database!',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'user',
-            description: 'The user to remove the birthday for (Admins/Mods only)',
+            description: 'User - @username - The user to remove the birthday for (Admins/Mods only)',
             type: 6, // USER
             required: false,
           },
@@ -206,12 +209,12 @@ const commands = [
       },
       {
         name: 'get',
-        description: 'See your stored birthday or a user\'s birthday (Admins/Mods only)',
+        description: 'See what the bot has saved for your birthday!',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'user',
-            description: 'The user to see the birthday for (Admins/Mods only)',
+            description: 'User - @username (Admins / Mods only)',
             type: 6, // USER
             required: false,
           },
@@ -221,24 +224,6 @@ const commands = [
         name: 'test',
         description: 'Test birthday announcements - sends to all shared servers (admin only)',
         type: 1, // SUB_COMMAND
-        options: [
-          {
-            name: 'day',
-            description: 'Day to test (1-31) - defaults to today if not specified',
-            type: 4, // INTEGER
-            required: false,
-            min_value: 1,
-            max_value: 31,
-          },
-          {
-            name: 'month',
-            description: 'Month to test (1-12) - defaults to today if not specified',
-            type: 4, // INTEGER
-            required: false,
-            min_value: 1,
-            max_value: 12,
-          },
-        ],
       },
       {
         name: 'send',
@@ -296,7 +281,7 @@ const commands = [
   },
   {
     name: 'ask',
-    description: 'Ask the AI a question directly',
+    description: 'Ask / Chat with the AI a question directly',
     options: [
       {
         name: 'question',
