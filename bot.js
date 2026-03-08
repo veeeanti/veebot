@@ -1331,6 +1331,7 @@ async function handleLocationSlashCommand(interaction) {
 /** /birthday — manage birthdays */
 async function handleBirthdaySlashCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
+  const subcommandGroup = interaction.options.getSubcommandGroup(); // For nested subcommands like 'channel set'
   const targetUser = interaction.options.getUser('user') || interaction.user;
   const isSelf = targetUser.id === interaction.user.id;
 
