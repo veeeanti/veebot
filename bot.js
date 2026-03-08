@@ -17,9 +17,9 @@ import { load } from 'cheerio';
 import winston from 'winston';
 
 // Import helper modules
-import { 
-  testConnection, 
-  initializeDatabase, 
+import {
+  testConnection,
+  initializeDatabase,
   closeDatabase,
   setBirthday,
   getBirthday,
@@ -122,6 +122,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.Presences,
   ],
 });
 
@@ -1153,7 +1154,7 @@ async function handleStatsSlashCommand(interaction) {
 
   try {
     const guild = interaction.guild;
-    await guild.members.fetch(); // ensure member cache is populated
+    await guild.members.fetch({ withPresences: true }); // Fetch members with presence data
 
     const totalMembers  = guild.memberCount;
     const onlineMembers = guild.members.cache.filter(m => m.presence?.status !== 'offline' && m.presence?.status !== undefined).size;
