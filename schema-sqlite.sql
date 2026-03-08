@@ -111,3 +111,17 @@ CREATE TRIGGER IF NOT EXISTS update_birthdays_updated_at AFTER UPDATE ON birthda
 BEGIN
     UPDATE birthdays SET updated_at = CURRENT_TIMESTAMP WHERE user_id = old.user_id;
 END;
+
+-- Birthday channels table (per-guild birthday announcement channel)
+CREATE TABLE IF NOT EXISTS birthday_channels (
+    guild_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Trigger to automatically update updated_at on birthday_channels
+CREATE TRIGGER IF NOT EXISTS update_birthday_channels_updated_at AFTER UPDATE ON birthday_channels
+BEGIN
+    UPDATE birthday_channels SET updated_at = CURRENT_TIMESTAMP WHERE guild_id = old.guild_id;
+END;

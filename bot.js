@@ -26,11 +26,13 @@ import {
   removeBirthday,
   getTodaysBirthdays,
   markBirthdayAsPinged,
+  setBirthdayChannel,
+  getBirthdayChannel,
+  removeBirthdayChannel,
   storeMessage
 } from './database.js';
 import { testEmbeddingService } from './embeddings.js';
 import semanticContextManager from './context-manager.js';
-import musicManager from './music-manager.js';
 
 /*══════════════════════════════════════════════════════════════════════════*
  * SECTION 1: CONFIGURATION & SETUP
@@ -212,6 +214,67 @@ const commands = [
             description: 'The user to see the birthday for (Admins/Mods only)',
             type: 6, // USER
             required: false,
+          },
+        ],
+      },
+      {
+        name: 'test',
+        description: 'Test birthday announcements - sends to all shared servers (admin only)',
+        type: 1, // SUB_COMMAND
+        options: [
+          {
+            name: 'day',
+            description: 'Day to test (1-31) - defaults to today if not specified',
+            type: 4, // INTEGER
+            required: false,
+            min_value: 1,
+            max_value: 31,
+          },
+          {
+            name: 'month',
+            description: 'Month to test (1-12) - defaults to today if not specified',
+            type: 4, // INTEGER
+            required: false,
+            min_value: 1,
+            max_value: 12,
+          },
+        ],
+      },
+      {
+        name: 'send',
+        description: 'Send birthday pings for today to all shared servers (admin only)',
+        type: 1, // SUB_COMMAND
+        options: [],
+      },
+      {
+        name: 'channel',
+        description: 'Set or remove the birthday announcement channel (admin only)',
+        type: 1, // SUB_COMMAND
+        options: [
+          {
+            name: 'set',
+            description: 'Set the birthday channel for this server',
+            type: 1, // SUB_COMMAND
+            options: [
+              {
+                name: 'channel',
+                description: 'The channel to send birthday announcements to',
+                type: 7, // CHANNEL
+                required: true,
+              },
+            ],
+          },
+          {
+            name: 'remove',
+            description: 'Remove the birthday channel for this server',
+            type: 1, // SUB_COMMAND
+            options: [],
+          },
+          {
+            name: 'get',
+            description: 'Get the current birthday channel for this server',
+            type: 1, // SUB_COMMAND
+            options: [],
           },
         ],
       },
@@ -913,40 +976,118 @@ function updateBotStatus() {
   client.user.setActivity(randomStatus, { type: ActivityType.Watching });
 }
 
-async function checkBirthdays() {
+async function checkBirthdays(customDay = null, customMonth = null) {
   if (!ENABLE_DATABASE) return;
 
   const now = new Date();
-  const day = now.getDate();
-  const month = now.getMonth() + 1; // getMonth is 0-indexed
+  const day = customDay !== null ? customDay : now.getDate();
+  const month = customMonth !== null ? customMonth : now.getMonth() + 1; // getMonth is 0-indexed
   const year = now.getFullYear();
+  const isTest = customDay !== null || customMonth !== null;
 
   try {
     const birthdays = await getTodaysBirthdays(day, month, year);
-    if (birthdays.length === 0) return;
-
-    // Use the configured CHANNEL_ID if available
-    if (!CHANNEL_ID) {
-      logger.warn('CHANNEL_ID not configured. Skipping birthday announcements.');
+    if (birthdays.length === 0) {
+      if (isTest) {
+        console.log('[Birthday Test] No birthdays found for the specified date.');
+      }
       return;
     }
 
-    const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-    if (!channel) {
-      logger.warn(`Could not find channel ${CHANNEL_ID} for birthday announcements.`);
+    if (isTest) {
+      console.log(`[Birthday Test] Found ${birthdays.length} birthday(s) for day=${day}, month=${month}`);
+    }
+
+    // Get all guilds the bot is in
+    const botGuilds = client.guilds.cache;
+    if (botGuilds.size === 0) {
+      logger.warn('Bot is not in any guilds. Cannot send birthday messages.');
       return;
     }
 
     for (const bday of birthdays) {
-      try {
-        const ageStr = bday.year ? ` (turning ${year - bday.year})` : '';
-        await channel.send(`🎂 **Happy Birthday <@${bday.user_id}>!** Hope you have an amazing day! 🎉${ageStr}`);
-        
-        // Mark as pinged for this year
-        await markBirthdayAsPinged(bday.user_id, year);
-        logger.info(`Birthday pinged for ${bday.user_id}`);
-      } catch (err) {
-        logger.error(`Failed to send birthday message for ${bday.user_id}: ${err.message}`);
+      const userId = bday.user_id;
+      const ageStr = bday.year ? ` (turning ${year - bday.year})` : '';
+      const birthdayMessage = `🎂 **Happy Birthday <@${userId}>!** Hope you have an amazing day! 🎉${ageStr}`;
+      
+      let serversMessaged = 0;
+      let failedServers = 0;
+
+      // Iterate through all guilds the bot is in
+      for (const [guildId, guild] of botGuilds) {
+        try {
+          // Check if the user is in this guild
+          let member = null;
+          try {
+            member = await guild.members.fetch(userId);
+          } catch (fetchErr) {
+            // User not in this guild
+            continue;
+          }
+
+          if (!member) {
+            // User not found in this guild, skip
+            continue;
+          }
+
+          // User is in this guild - find a channel to send to
+          // Try to use a birthday-specific channel from env, or find the first available text channel
+          // Priority: database > BIRTHDAY_CHANNEL_{guildId} > BIRTHDAY_CHANNEL > CHANNEL_ID
+          let guildChannelId = await getBirthdayChannel(guildId);
+          
+          if (!guildChannelId) {
+            guildChannelId = process.env[`BIRTHDAY_CHANNEL_${guildId}`] || process.env.BIRTHDAY_CHANNEL;
+          }
+          
+          let channel = null;
+
+          if (guildChannelId) {
+            channel = await guild.channels.fetch(guildChannelId).catch(() => null);
+          }
+
+          // If no specific channel configured, try CHANNEL_ID (legacy support)
+          if (!channel && CHANNEL_ID) {
+            channel = await guild.channels.fetch(CHANNEL_ID).catch(() => null);
+          }
+
+          // If no specific channel configured, try the default channel or first text channel
+          if (!channel) {
+            // Try system channel first
+            channel = guild.systemChannel;
+            
+            // If no system channel, find any text channel
+            if (!channel) {
+              const textChannels = guild.channels.cache.filter(
+                c => c.isTextBased() && !c.isThread()
+              );
+              channel = textChannels.first();
+            }
+          }
+
+          if (channel && channel.isTextBased()) {
+            await channel.send(birthdayMessage);
+            serversMessaged++;
+            if (isTest) {
+              console.log(`[Birthday Test] Sent birthday message to guild '${guild.name}' (${guildId})`);
+            }
+          } else {
+            failedServers++;
+          }
+        } catch (err) {
+          logger.error(`Failed to send birthday message in guild ${guildId}: ${err.message}`);
+          failedServers++;
+        }
+      }
+
+      // Mark as pinged for this year (unless it's a test)
+      if (!isTest) {
+        await markBirthdayAsPinged(userId, year);
+      }
+
+      logger.info(`Birthday pinged for ${userId} in ${serversMessaged} server(s)${failedServers > 0 ? `, failed in ${failedServers}` : ''}`);
+
+      if (isTest) {
+        console.log(`[Birthday Test] Completed: messaged ${serversMessaged} server(s), failed ${failedServers}`);
       }
     }
   } catch (error) {
@@ -1079,6 +1220,9 @@ async function handleHelpSlashCommand(interaction) {
       { name: '📍 `/location`',       value: 'Show the bot\'s runtime environment details.' },
       { name: '🎂 `/birthday set <month> <day> [year] [user]`', value: 'Set a birthday (Admins/Mods can set for others).' },
       { name: '🎂 `/birthday get [user]` / `remove [user]`', value: 'View or remove a stored birthday.' },
+      { name: '🎂 `/birthday test [day] [month]`', value: 'Test birthday pings (Admin only).' },
+      { name: '🎂 `/birthday send`', value: 'Send today\'s birthday pings to all servers (Admin only).' },
+      { name: '🎂 `/birthday channel set|get|remove`', value: 'Manage birthday channel per server (Admin only).' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
     )
     .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
@@ -1188,6 +1332,123 @@ async function handleBirthdaySlashCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
   const targetUser = interaction.options.getUser('user') || interaction.user;
   const isSelf = targetUser.id === interaction.user.id;
+
+  // Permission check for test command (admin only)
+  if (subcommand === 'test') {
+    const member = interaction.member;
+    const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
+    
+    if (!isAdmin) {
+      return interaction.reply({
+        content: '❌ Only Administrators can run the birthday test command.'
+      });
+    }
+
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+    }
+
+    const testDay = interaction.options.getInteger('day');
+    const testMonth = interaction.options.getInteger('month');
+
+    await interaction.reply({ content: '🔄 Running birthday test... Check console for details.' });
+    
+    // Run the test with optional custom day/month
+    await checkBirthdays(testDay, testMonth);
+    
+    const dateStr = testDay && testMonth 
+      ? `${testMonth}/${testDay}` 
+      : 'today';
+    
+    await interaction.followUp({ content: `✅ Birthday test completed for ${dateStr}. Check the console/logs for details.` });
+    return;
+  }
+
+  // Permission check for send command (admin only)
+  if (subcommand === 'send') {
+    const member = interaction.member;
+    const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
+    
+    if (!isAdmin) {
+      return interaction.reply({
+        content: '❌ Only Administrators can send birthday pings.'
+      });
+    }
+
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+    }
+
+    await interaction.reply({ content: '🔄 Sending birthday pings for today to all shared servers...' });
+    
+    // Send today's birthdays (will mark as pinged)
+    await checkBirthdays();
+    
+    await interaction.followUp({ content: '✅ Birthday pings have been sent to all shared servers!' });
+    return;
+  }
+
+  // Handle /birthday channel set/remove/get
+  if (subcommand === 'channel') {
+    const member = interaction.member;
+    const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
+    
+    if (!isAdmin) {
+      return interaction.reply({
+        content: '❌ Only Administrators can manage birthday channels.'
+      });
+    }
+
+    if (!ENABLE_DATABASE) {
+      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+    }
+
+    // Get the nested subcommand (set, remove, or get)
+    const channelSubcommand = interaction.options.getSubcommand();
+
+    // Handle /birthday channel get
+    if (channelSubcommand === 'get') {
+      const guildId = interaction.guildId;
+      const channelId = await getBirthdayChannel(guildId);
+      
+      if (channelId) {
+        await interaction.reply({ content: `📢 The birthday channel for this server is set to <#${channelId}>` });
+      } else {
+        await interaction.reply({ content: '📢 No birthday channel is set for this server. Use `/birthday channel set` to configure one.' });
+      }
+      return;
+    }
+
+    // Handle /birthday channel set <channel>
+    if (channelSubcommand === 'set') {
+      const channel = interaction.options.getChannel('channel');
+      
+      if (!channel || !channel.isTextBased()) {
+        return interaction.reply({ content: '❌ Please select a valid text channel.' });
+      }
+
+      const success = await setBirthdayChannel(interaction.guildId, channel.id);
+      
+      if (success) {
+        await interaction.reply({ content: `✅ Birthday channel has been set to <#${channel.id}>` });
+      } else {
+        await interaction.reply({ content: '❌ Failed to set birthday channel. Please try again.' });
+      }
+      return;
+    }
+
+    // Handle /birthday channel remove
+    if (channelSubcommand === 'remove') {
+      const success = await removeBirthdayChannel(interaction.guildId);
+      
+      if (success) {
+        await interaction.reply({ content: '✅ Birthday channel has been removed for this server.' });
+      } else {
+        await interaction.reply({ content: '❌ Failed to remove birthday channel. It may not have been set.' });
+      }
+      return;
+    }
+  }
 
   // Permission check: only admins and moderators can manage other users' birthdays
   if (!isSelf) {

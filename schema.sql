@@ -85,3 +85,18 @@ CREATE TRIGGER update_birthdays_updated_at
     BEFORE UPDATE ON birthdays
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Birthday channels table (per-guild birthday announcement channel)
+CREATE TABLE IF NOT EXISTS birthday_channels (
+    guild_id VARCHAR(255) PRIMARY KEY,
+    channel_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Trigger for birthday_channels
+DROP TRIGGER IF EXISTS update_birthday_channels_updated_at ON birthday_channels;
+CREATE TRIGGER update_birthday_channels_updated_at
+    BEFORE UPDATE ON birthday_channels
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();

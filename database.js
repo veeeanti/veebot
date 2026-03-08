@@ -216,7 +216,7 @@ export async function findSimilarMessages(queryText, guildId = null, authorId = 
         if (DB_TYPE === 'postgres') {
             let query = `
                 SELECT id, content, author_name, message_type, created_at,
-                       ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) as similarity_score
+                    ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) as similarity_score
                 FROM messages
                 WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
             `;
@@ -609,6 +609,73 @@ export async function markBirthdayAsPinged(userId, year) {
         return true;
     } catch (error) {
         console.error('Failed to mark birthday as pinged:', error.message);
+        return false;
+    }
+}
+
+/*
+ * SECTION 6f: setBirthdayChannel()
+ * Sets the birthday announcement channel for a guild
+ */
+export async function setBirthdayChannel(guildId, channelId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `
+                INSERT INTO birthday_channels (guild_id, channel_id)
+                VALUES ($1, $2)
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET channel_id = EXCLUDED.channel_id, updated_at = NOW()
+            `;
+            await pgPool.query(query, [guildId, channelId]);
+        } else {
+            const stmt = sqliteDb.prepare(`
+                INSERT INTO birthday_channels (guild_id, channel_id)
+                VALUES (?, ?)
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET channel_id = EXCLUDED.channel_id, updated_at = CURRENT_TIMESTAMP
+            `);
+            stmt.run(guildId, channelId);
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to set birthday channel:', error.message);
+        return false;
+    }
+}
+
+/*
+ * SECTION 6g: getBirthdayChannel()
+ * Gets the birthday channel for a guild
+ */
+export async function getBirthdayChannel(guildId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const result = await pgPool.query('SELECT channel_id FROM birthday_channels WHERE guild_id = $1', [guildId]);
+            return result.rows[0]?.channel_id || null;
+        } else {
+            const row = sqliteDb.prepare('SELECT channel_id FROM birthday_channels WHERE guild_id = ?').get(guildId);
+            return row?.channel_id || null;
+        }
+    } catch (error) {
+        console.error('Failed to get birthday channel:', error.message);
+        return null;
+    }
+}
+
+/*
+ * SECTION 6h: removeBirthdayChannel()
+ * Removes the birthday channel for a guild
+ */
+export async function removeBirthdayChannel(guildId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            await pgPool.query('DELETE FROM birthday_channels WHERE guild_id = $1', [guildId]);
+        } else {
+            sqliteDb.prepare('DELETE FROM birthday_channels WHERE guild_id = ?').run(guildId);
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to remove birthday channel:', error.message);
         return false;
     }
 }
