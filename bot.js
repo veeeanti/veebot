@@ -172,24 +172,18 @@ const commands = [
             description: 'Month - XX (What month were you born in?)',
             type: 4, // INTEGER
             required: true,
-            min_value: 1,
-            max_value: 12,
           },
           {
             name: 'day',
             description: 'Day - XX (What day were you born on?)',
             type: 4, // INTEGER
             required: true,
-            min_value: 1,
-            max_value: 31,
           },
           {
             name: 'year',
             description: 'Year - XXXX (optional, only to say something like "happy 300th birthday!" if wanted)',
             type: 4, // INTEGER
             required: false,
-            min_value: 100,
-            max_value: new Date().getFullYear(),
           },
           {
             name: 'user',
@@ -536,7 +530,7 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     return reply;
   } catch (err) {
     logger.error(`Error generating AI response: ${err.message}`);
-    return 'I am experiencing technical difficulties. How annoying.';
+    return 'Eek! Something\'s wrong here, I\'m terribly sorry!!';
   }
 }
 
@@ -1329,7 +1323,7 @@ async function handleSearchSlashCommand(interaction) {
         .setDescription(unionCraxResult.description || 'No description available')
         .addFields(
           { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
-          { name: '👁️ Views',    value: unionCraxResult.viewCount ? String(unionCraxResult.viewCount) : 'N/A',    inline: true },
+          { name: '👁️ Views',     value: unionCraxResult.viewCount ? String(unionCraxResult.viewCount) : 'N/A',    inline: true },
           { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
           { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
         )
@@ -1563,12 +1557,57 @@ async function handleBirthdaySlashCommand(interaction) {
     const day = interaction.options.getInteger('day');
     const year = interaction.options.getInteger('year');
 
-    // Basic date validation
+    // Check for special dates
     const currentYear = new Date().getFullYear();
-    const daysInMonth = new Date(year || currentYear, month, 0).getDate();
+    const currentMonth = new Date().getMonth() + 1; // 1-indexed
+    const currentDay = new Date().getDate();
 
-    if (day > daysInMonth) {
-      return interaction.reply({ content: `❌ That doesn't look like a valid date for month ${month}.` });
+    // Special response for 00/00/0000
+    if (month === 0 && day === 0 && year === 0) {
+      const anomaliesResponses = [
+        'Do you even exist??',
+        'Inconceivable!',
+        'Anomalies must be dealt with accordingly.'
+      ];
+      const randomResponse = anomaliesResponses[Math.floor(Math.random() * anomaliesResponses.length)];
+      return interaction.reply({ content: randomResponse });
+    }
+
+    // Special response for olds
+    if (year < 1990) {
+      const oldsResponses = [
+        'Old! Old! Get off my lawn!',
+        'You must have seen the rise of the internet itself... Respect.',
+        'How\'s your back? Do your knees crack? Just kidding, vee\'s does too. And she\'s still 22. :rofl:'
+      ];
+      const randomResponse = oldsResponses[Math.floor(Math.random() * oldsResponses.length)];
+      return interaction.reply({ content: randomResponse });
+    }
+
+    // Check if the date is in the future
+    let isFutureDate = false;
+    if (year) {
+      if (year > currentYear) {
+        isFutureDate = true;
+      } else if (year === currentYear) {
+        if (month > currentMonth) {
+          isFutureDate = true;
+        } else if (month === currentMonth && day > currentDay) {
+          isFutureDate = true;
+        }
+      }
+    }
+
+    if (isFutureDate) {
+      return interaction.reply({ content: "You haven't even been born yet." });
+    }
+
+    // Basic date validation (only if year is provided and not a special case)
+    if (year && year <= currentYear) {
+      const daysInMonth = new Date(year, month, 0).getDate();
+      if (day > daysInMonth) {
+        return interaction.reply({ content: `❌ That doesn't look like a valid date for month ${month}.` });
+      }
     }
 
     if (!ENABLE_DATABASE) {
