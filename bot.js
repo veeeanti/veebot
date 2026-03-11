@@ -433,8 +433,8 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
 
     let reply = '';
     
-    // Determine which model to use - vision model if images present
-    const modelToUse = hasImages ? VISION_MODEL : AI_MODEL;
+    // Always use the same model for both text and image interpretation
+    const modelToUse = AI_MODEL;
 
     if (LOCAL) {
       throw new Error('Local model not supported in Node.js version.');
@@ -468,7 +468,7 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
         {
           model: modelToUse,
           messages: messages,
-          temperature: 0.7,
+          temperature: 0.5,
           max_tokens: hasImages ? 300 : 120,
         },
         {
