@@ -1573,16 +1573,16 @@ async function handleBirthdaySlashCommand(interaction) {
       return interaction.reply({ content: randomResponse });
     }
 
-    // Special response for olds
-    if (year < 1990) {
-      const oldsResponses = [
-        'Old! Old! Get off my lawn!',
-        'You must have seen the rise of the internet itself... Respect.',
-        'How\'s your back? Do your knees crack? Just kidding, vee\'s does too. And she\'s still 22. :rofl:'
-      ];
-      const randomResponse = oldsResponses[Math.floor(Math.random() * oldsResponses.length)];
-      return interaction.reply({ content: randomResponse });
-    }
+     // Special response for olds
+     if (year !== null && year < 1990) {
+       const oldsResponses = [
+         'Old! Old! Get off my lawn!',
+         'You must have seen the rise of the internet itself... Respect.',
+         'How\'s your back? Do your knees crack? Just kidding, vee\'s does too. And she\'s still 22. :rofl:'
+       ];
+       const randomResponse = oldsResponses[Math.floor(Math.random() * oldsResponses.length)];
+       return interaction.reply({ content: randomResponse });
+     }
 
     // Check if the date is in the future
     let isFutureDate = false;
