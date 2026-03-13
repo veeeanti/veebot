@@ -91,7 +91,6 @@ const config = {
     'meow',
     'welcome to the machine',
     "ＬＥＴ＇Ｓ ＡＬＬ ＬＯＶＥ ＬＡＩＮ",
-    "ＧｏＤ_Ｉｓ_ｉＮ_ｔＨｅ_ＷｉＲｅＤ",
     "Check out union-crax.xyz!",
     "I am not a cat.",
     "Check out vee-anti.xyz!",
