@@ -872,6 +872,13 @@ client.on('messageCreate', async (message) => {
         case 'birthday':
           await handleBirthdaySlashCommand(message, args);
           break;
+        case 'autoban':
+          await handleAutobanPrefixCommand(message, args);
+          break;
+        case 'settings':
+        case 'setting':
+          await handleSettingsPrefixCommand(message, args);
+          break;
         default:
           message.reply(`❓ Unknown command. Use slash commands: /search, /info, /location, /ping, /ask, /stats, /help`);
       }
@@ -1440,8 +1447,10 @@ async function handleHelpSlashCommand(interaction) {
       { name: '⚙️ `/settings spam_threshold`', value: 'Set images/links threshold for autoban.' },
       { name: '⚙️ `/settings spam_window`', value: 'Set spam detection time window.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
+      { name: '\uD83D\uDC4B Prefix Commands', value: `Also available with \`${config.prefix}\`:`, inline: false },
+      { name: `\uD83D\uDD27 \`${config.prefix}autoban\``, value: '`set #channel`, `get`, `remove` - Manage spam autoban' },
+      { name: `\u2699\uFE0F \`${config.prefix}settings\``, value: '`view`, `ai_channel`, `chance`, `threshold`, `window` - Server settings' },
     )
-    .setFooter({ text: 'Prefix commands also available with ' + config.prefix })
     .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
@@ -2172,6 +2181,243 @@ async function handleLocationCommand(message) {
     logger.error(`Location command error: ${error.message}`);
     message.reply('❌ An error occurred while getting location information.');
   }
+}
+
+/** !autoban — manage the autoban channel for spam detection */
+async function handleAutobanPrefixCommand(message, args) {
+  if (!message.guild) {
+    return message.reply('❌ This command can only be used in a server.');
+  }
+
+  const member = message.member;
+  const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
+  
+  if (!isAdmin) {
+    return message.reply('❌ Only Administrators can manage the autoban channel.');
+  }
+
+  if (!ENABLE_DATABASE) {
+    return message.reply('❌ Autoban channel management is currently disabled (database not enabled in `.env`).');
+  }
+
+  const subcommand = args[0]?.toLowerCase();
+
+  // Handle !autoban get
+  if (subcommand === 'get') {
+    const guildId = message.guild.id;
+    const channelId = await getAutobanChannel(guildId);
+    
+    if (channelId) {
+      return message.reply(`🛡️ The autoban channel for this server is set to <#${channelId}>. The 4 images/links rule will only apply in this channel.`);
+    } else {
+      return message.reply('🛡️ No autoban channel is set for this server. Use `!autoban set #channel` to configure one. Spam detection is currently disabled.');
+    }
+  }
+
+  // Handle !autoban set <channel>
+  if (subcommand === 'set') {
+    const channelMention = args[1];
+    if (!channelMention) {
+      return message.reply('❌ Please specify a channel. Usage: `!autoban set #channel`');
+    }
+
+    // Extract channel ID from mention
+    const channelId = channelMention.replace(/<#|>/g, '');
+    const channel = message.guild.channels.cache.get(channelId);
+    
+    if (!channel || !channel.isTextBased()) {
+      return message.reply('❌ Please specify a valid text channel.');
+    }
+
+    const success = await setAutobanChannel(message.guild.id, channel.id);
+    
+    if (success) {
+      return message.reply(`✅ Autoban channel has been set to <#${channel.id}>. The 4 images/links spam detection rule will now only apply in this channel.`);
+    } else {
+      return message.reply('❌ Failed to set autoban channel. Please try again.');
+    }
+  }
+
+  // Handle !autoban remove
+  if (subcommand === 'remove' || subcommand === 'delete') {
+    const success = await removeAutobanChannel(message.guild.id);
+    
+    if (success) {
+      return message.reply('✅ Autoban channel has been removed for this server. Spam detection is now disabled.');
+    } else {
+      return message.reply('❌ Failed to remove autoban channel. It may not have been set.');
+    }
+  }
+
+  // Show help if no valid subcommand
+  return message.reply(
+    '🛡️ **Autoban Command Usage:**\n' +
+    '`!autoban set #channel` - Set the channel for spam autoban\n' +
+    '`!autoban get` - View current autoban channel\n' +
+    '`!autoban remove` - Remove autoban channel\n\n' +
+    'The 4 images/links rule will only apply in the set channel.'
+  );
+}
+
+/** !settings — manage server settings */
+async function handleSettingsPrefixCommand(message, args) {
+  if (!message.guild) {
+    return message.reply('❌ This command can only be used in a server.');
+  }
+
+  const member = message.member;
+  const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
+  
+  if (!isAdmin) {
+    return message.reply('❌ Only Administrators can manage server settings.');
+  }
+
+  if (!ENABLE_DATABASE) {
+    return message.reply('❌ Server settings are currently disabled (database not enabled in `.env`).');
+  }
+
+  const subcommand = args[0]?.toLowerCase();
+  const guildId = message.guild.id;
+
+  // Handle !settings view
+  if (subcommand === 'view' || subcommand === 'list') {
+    const settings = await getAllServerSettings(guildId);
+    const autobanChannel = await getAutobanChannel(guildId);
+    
+    const embed = new EmbedBuilder()
+      .setTitle('⚙️ Server Settings')
+      .setColor(0x5865f2)
+      .setTimestamp();
+
+    // AI Channel
+    const aiChannel = settings.ai_channel;
+    embed.addFields({
+      name: '🤖 AI Channel',
+      value: aiChannel ? `<#${aiChannel}>` : (CHANNEL_ID ? `<#${CHANNEL_ID}>` : 'Not set'),
+      inline: true
+    });
+
+    // Response Chance
+    const responseChance = settings.random_response_chance || String(RANDOM_RESPONSE_CHANCE);
+    embed.addFields({
+      name: '📊 Response Chance',
+      value: `${Math.round(parseFloat(responseChance) * 100)}%`,
+      inline: true
+    });
+
+    // Autoban Channel
+    embed.addFields({
+      name: '🛡️ Autoban Channel',
+      value: autobanChannel ? `<#${autobanChannel}>` : 'Not set (disabled)',
+      inline: true
+    });
+
+    // Spam Thresholds
+    const spamImageThreshold = settings.spam_image_threshold || String(SPAM_IMAGE_THRESHOLD);
+    const spamLinkThreshold = settings.spam_link_threshold || String(SPAM_LINK_THRESHOLD);
+    const spamWindow = settings.spam_window_ms || String(SPAM_WINDOW_MS);
+    
+    embed.addFields({
+      name: '🚫 Spam Image Threshold',
+      value: `${spamImageThreshold} images`,
+      inline: true
+    });
+
+    embed.addFields({
+      name: '🚫 Spam Link Threshold',
+      value: `${spamLinkThreshold} links`,
+      inline: true
+    });
+
+    embed.addFields({
+      name: '⏱️ Spam Window',
+      value: `${parseInt(spamWindow) / 1000} seconds`,
+      inline: true
+    });
+
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Handle !settings ai_channel
+  if (subcommand === 'ai_channel' || subcommand === 'aichannel') {
+    const channelMention = args[1];
+    
+    if (channelMention) {
+      const channelId = channelMention.replace(/<#|>/g, '');
+      const channel = message.guild.channels.cache.get(channelId);
+      
+      if (!channel) {
+        return message.reply('❌ Please specify a valid channel.');
+      }
+      
+      await setServerSetting(guildId, 'ai_channel', channel.id);
+      return message.reply(`✅ AI channel set to <#${channel.id}>. The bot will respond in this channel.`);
+    } else {
+      await removeServerSetting(guildId, 'ai_channel');
+      return message.reply('✅ AI channel has been reset. The bot will use the default channel from .env.');
+    }
+  }
+
+  // Handle !settings response_chance
+  if (subcommand === 'response_chance' || subcommand === 'chance') {
+    const percentage = args[1];
+    if (!percentage) {
+      return message.reply('❌ Please provide a value. Usage: `!settings response_chance 0.1` (0.0 to 1.0)');
+    }
+    
+    const chance = parseFloat(percentage);
+    if (isNaN(chance) || chance < 0 || chance > 1) {
+      return message.reply('❌ Please provide a value between 0.0 and 1.0 (e.g., 0.1 = 10%).');
+    }
+
+    await setServerSetting(guildId, 'random_response_chance', String(chance));
+    return message.reply(`✅ Response chance set to ${Math.round(chance * 100)}%.`);
+  }
+
+  // Handle !settings spam_threshold
+  if (subcommand === 'spam_threshold' || subcommand === 'threshold') {
+    const count = args[1];
+    if (!count) {
+      return message.reply('❌ Please provide a value. Usage: `!settings spam_threshold 4` (1-20)');
+    }
+    
+    const countNum = parseInt(count);
+    if (isNaN(countNum) || countNum < 1 || countNum > 20) {
+      return message.reply('❌ Please provide a value between 1 and 20.');
+    }
+
+    await setServerSetting(guildId, 'spam_image_threshold', String(countNum));
+    await setServerSetting(guildId, 'spam_link_threshold', String(countNum));
+    return message.reply(`✅ Spam threshold set to ${countNum} images/links. Users posting ${countNum}+ images or links in the autoban channel will be banned.`);
+  }
+
+  // Handle !settings spam_window
+  if (subcommand === 'spam_window' || subcommand === 'window') {
+    const seconds = args[1];
+    if (!seconds) {
+      return message.reply('❌ Please provide a value. Usage: `!settings spam_window 30` (5-300 seconds)');
+    }
+    
+    const secondsNum = parseInt(seconds);
+    if (isNaN(secondsNum) || secondsNum < 5 || secondsNum > 300) {
+      return message.reply('❌ Please provide a value between 5 and 300 seconds.');
+    }
+
+    const ms = secondsNum * 1000;
+    await setServerSetting(guildId, 'spam_window_ms', String(ms));
+    return message.reply(`✅ Spam window set to ${secondsNum} seconds.`);
+  }
+
+  // Show help if no valid subcommand
+  return message.reply(
+    '⚙️ **Settings Command Usage:**\n' +
+    '`!settings view` - View all server settings\n' +
+    '`!settings ai_channel #channel` - Set the AI response channel\n' +
+    '`!settings ai_channel` - Reset AI channel to default\n' +
+    '`!settings response_chance 0.1` - Set response chance (0.0-1.0)\n' +
+    '`!settings spam_threshold 4` - Set images/links threshold (1-20)\n' +
+    '`!settings spam_window 30` - Set spam detection window (5-300 seconds)'
+  );
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
