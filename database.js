@@ -713,3 +713,189 @@ export async function removeBirthdayChannel(guildId) {
         return false;
     }
 }
+
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 7: AUTOBAN CHANNEL FUNCTIONS
+ * Store, retrieve, and manage the autoban channel for spam detection
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+/*
+ * SECTION 7a: setAutobanChannel()
+ * Sets the autoban channel for a guild (where spam detection is active)
+ */
+export async function setAutobanChannel(guildId, channelId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `
+                INSERT INTO autoban_channels (guild_id, channel_id)
+                VALUES ($1, $2)
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET channel_id = EXCLUDED.channel_id, updated_at = NOW()
+            `;
+            await pgPool.query(query, [guildId, channelId]);
+        } else {
+            const stmt = sqliteDb.prepare(`
+                INSERT INTO autoban_channels (guild_id, channel_id)
+                VALUES (?, ?)
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET channel_id = EXCLUDED.channel_id, updated_at = CURRENT_TIMESTAMP
+            `);
+            stmt.run(guildId, channelId);
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to set autoban channel:', error.message);
+        return false;
+    }
+}
+
+/*
+ * SECTION 7b: getAutobanChannel()
+ * Gets the autoban channel for a guild
+ */
+export async function getAutobanChannel(guildId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const result = await pgPool.query('SELECT channel_id FROM autoban_channels WHERE guild_id = $1', [guildId]);
+            return result.rows[0]?.channel_id || null;
+        } else {
+            const row = sqliteDb.prepare('SELECT channel_id FROM autoban_channels WHERE guild_id = ?').get(guildId);
+            return row?.channel_id || null;
+        }
+    } catch (error) {
+        console.error('Failed to get autoban channel:', error.message);
+        return null;
+    }
+}
+
+/*
+ * SECTION 7c: removeAutobanChannel()
+ * Removes the autoban channel for a guild (disables spam detection)
+ */
+export async function removeAutobanChannel(guildId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            await pgPool.query('DELETE FROM autoban_channels WHERE guild_id = $1', [guildId]);
+        } else {
+            sqliteDb.prepare('DELETE FROM autoban_channels WHERE guild_id = ?').run(guildId);
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to remove autoban channel:', error.message);
+        return false;
+    }
+}
+
+/*══════════════════════════════════════════════════════════════════════════*
+ * SECTION 8: SERVER SETTINGS
+ * Store and retrieve per-server configuration settings
+ * ───────────────────────────────────────────────────────────────────────────────*/
+
+/*
+ * SECTION 8a: setServerSetting()
+ * Sets a server setting (creates or updates)
+ */
+export async function setServerSetting(guildId, settingName, settingValue) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const query = `
+                INSERT INTO server_settings (guild_id, setting_name, setting_value)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, setting_name) 
+                DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = NOW()
+            `;
+            await pgPool.query(query, [guildId, settingName, String(settingValue)]);
+        } else {
+            const stmt = sqliteDb.prepare(`
+                INSERT INTO server_settings (guild_id, setting_name, setting_value)
+                VALUES (?, ?, ?)
+                ON CONFLICT (guild_id, setting_name) 
+                DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP
+            `);
+            stmt.run(guildId, settingName, String(settingValue));
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to set server setting:', error.message);
+        return false;
+    }
+}
+
+/*
+ * Section 8b: getServerSetting()
+ * Gets a specific server setting
+ */
+export async function getServerSetting(guildId, settingName) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const result = await pgPool.query(
+                'SELECT setting_value FROM server_settings WHERE guild_id = $1 AND setting_name = $2',
+                [guildId, settingName]
+            );
+            return result.rows[0]?.setting_value || null;
+        } else {
+            const row = sqliteDb.prepare(
+                'SELECT setting_value FROM server_settings WHERE guild_id = ? AND setting_name = ?'
+            ).get(guildId, settingName);
+            return row?.setting_value || null;
+        }
+    } catch (error) {
+        console.error('Failed to get server setting:', error.message);
+        return null;
+    }
+}
+
+/*
+ * Section 8c: getAllServerSettings()
+ * Gets all server settings for a guild
+ */
+export async function getAllServerSettings(guildId) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            const result = await pgPool.query(
+                'SELECT setting_name, setting_value FROM server_settings WHERE guild_id = $1',
+                [guildId]
+            );
+            const settings = {};
+            for (const row of result.rows) {
+                settings[row.setting_name] = row.setting_value;
+            }
+            return settings;
+        } else {
+            const rows = sqliteDb.prepare(
+                'SELECT setting_name, setting_value FROM server_settings WHERE guild_id = ?'
+            ).all(guildId);
+            const settings = {};
+            for (const row of rows) {
+                settings[row.setting_name] = row.setting_value;
+            }
+            return settings;
+        }
+    } catch (error) {
+        console.error('Failed to get all server settings:', error.message);
+        return {};
+    }
+}
+
+/*
+ * Section 8d: removeServerSetting()
+ * Removes a specific server setting
+ */
+export async function removeServerSetting(guildId, settingName) {
+    try {
+        if (DB_TYPE === 'postgres') {
+            await pgPool.query(
+                'DELETE FROM server_settings WHERE guild_id = $1 AND setting_name = $2',
+                [guildId, settingName]
+            );
+        } else {
+            sqliteDb.prepare(
+                'DELETE FROM server_settings WHERE guild_id = ? AND setting_name = ?'
+            ).run(guildId, settingName);
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to remove server setting:', error.message);
+        return false;
+    }
+}

@@ -125,3 +125,37 @@ CREATE TRIGGER IF NOT EXISTS update_birthday_channels_updated_at AFTER UPDATE ON
 BEGIN
     UPDATE birthday_channels SET updated_at = CURRENT_TIMESTAMP WHERE guild_id = old.guild_id;
 END;
+
+-- Autoban channels table (per-guild channel where spam detection is active)
+CREATE TABLE IF NOT EXISTS autoban_channels (
+    guild_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Trigger to automatically update updated_at on autoban_channels
+CREATE TRIGGER IF NOT EXISTS update_autoban_channels_updated_at AFTER UPDATE ON autoban_channels
+BEGIN
+    UPDATE autoban_channels SET updated_at = CURRENT_TIMESTAMP WHERE guild_id = old.guild_id;
+END;
+
+-- Server settings table (per-guild configuration)
+CREATE TABLE IF NOT EXISTS server_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id VARCHAR(255) NOT NULL,
+    setting_name VARCHAR(100) NOT NULL,
+    setting_value TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(guild_id, setting_name)
+);
+
+-- Indexes for server_settings
+CREATE INDEX IF NOT EXISTS idx_server_settings_guild_id ON server_settings(guild_id);
+
+-- Trigger to automatically update updated_at on server_settings
+CREATE TRIGGER IF NOT EXISTS update_server_settings_updated_at AFTER UPDATE ON server_settings
+BEGIN
+    UPDATE server_settings SET updated_at = CURRENT_TIMESTAMP WHERE id = old.id;
+END;

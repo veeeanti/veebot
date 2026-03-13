@@ -100,3 +100,39 @@ CREATE TRIGGER update_birthday_channels_updated_at
     BEFORE UPDATE ON birthday_channels
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Autoban channels table (per-guild channel where spam detection is active)
+CREATE TABLE IF NOT EXISTS autoban_channels (
+    guild_id VARCHAR(255) PRIMARY KEY,
+    channel_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Trigger for autoban_channels
+DROP TRIGGER IF EXISTS update_autoban_channels_updated_at ON autoban_channels;
+CREATE TRIGGER update_autoban_channels_updated_at
+    BEFORE UPDATE ON autoban_channels
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Server settings table (per-guild configuration)
+CREATE TABLE IF NOT EXISTS server_settings (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id VARCHAR(255) NOT NULL,
+    setting_name VARCHAR(100) NOT NULL,
+    setting_value TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(guild_id, setting_name)
+);
+
+-- Indexes for server_settings
+CREATE INDEX IF NOT EXISTS idx_server_settings_guild_id ON server_settings(guild_id);
+
+-- Trigger for server_settings
+DROP TRIGGER IF EXISTS update_server_settings_updated_at ON server_settings;
+CREATE TRIGGER update_server_settings_updated_at
+    BEFORE UPDATE ON server_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
