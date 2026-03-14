@@ -5,7 +5,8 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "dev": "npm start"
+    "dev": "npm start",
+    "startserv": "npm install && npm start"
   },
   "keywords": [],
   "author": "",
