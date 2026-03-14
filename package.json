@@ -11,7 +11,7 @@
     "setup-db": "node setup-db.js",
     "primeit": "pnpm run setup-db && npm run start",
     "startserv": "pnpm run start && cd server && pnpm run startserv",
-    "startservr": "cd server && npm install && node ./server/server.js"
+    "startservr": "cd server && npm install && node ./server.js"
   },
   "keywords": [
     "discord",
