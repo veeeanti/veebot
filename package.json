@@ -10,7 +10,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "setup-db": "node setup-db.js",
     "primeit": "pnpm run setup-db && npm run start",
-    "startserv": "pnpm run start && cd server && pnpm run startserv"
+    "startserv": "pnpm run start && cd server && pnpm run startserv",
+    "startservr": "node ./server/server.js"
   },
   "keywords": [
     "discord",
