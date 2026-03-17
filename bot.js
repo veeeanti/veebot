@@ -10,7 +10,6 @@ import {
   REST,
   Routes,
   PermissionFlagsBits,
-  MessageFlags,
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
@@ -32,9 +31,6 @@ import {
   setBirthdayChannel,
   getBirthdayChannel,
   removeBirthdayChannel,
-  setAutobanChannel,
-  getAutobanChannel,
-  removeAutobanChannel,
   setServerSetting,
   getServerSetting,
   getAllServerSettings,
@@ -54,7 +50,6 @@ const CHANNEL_ID             = process.env.CHANNEL_ID;
 const LOCAL                  = process.env.LOCAL === 'true';
 const AI_MODEL               = process.env.AI_MODEL;
 const OPENROUTER_API_KEY     = process.env.OPENROUTER_API_KEY;
-const VISION_MODEL           = process.env.VISION_MODEL || 'anthropic/claude-3-haiku';
 const RANDOM_RESPONSE_CHANCE = parseFloat(process.env.RANDOM_RESPONSE_CHANCE || '0.1');
 const PROMPT                 = process.env.PROMPT || '';
 const DEBUG                  = process.env.DEBUG === 'true';
@@ -64,31 +59,13 @@ const ENABLE_DATABASE        = process.env.ENABLE_DATABASE === 'true';
 const DATABASE_TYPE          = process.env.DATABASE_TYPE || 'sqlite';
 const DATABASE_URL           = process.env.DATABASE_URL;
 const FRIENDLY_FIRE          = process.env.FRIENDLY_FIRE === 'true';
-const SPAM_DETECTION_ENABLED = process.env.SPAM_DETECTION_ENABLED !== 'false'; // default ON
-const MOD_LOG_CHANNEL_ID     = process.env.MOD_LOG_CHANNEL_ID || null;
-
-// Spam detection thresholds (configurable via env)
-const SPAM_IMAGE_THRESHOLD   = parseInt(process.env.SPAM_IMAGE_THRESHOLD  || '4', 10);
-const SPAM_LINK_THRESHOLD    = parseInt(process.env.SPAM_LINK_THRESHOLD   || '4', 10);
-const SPAM_CHANNEL_THRESHOLD = parseInt(process.env.SPAM_CHANNEL_THRESHOLD || '3', 10);
-const SPAM_WINDOW_MS         = parseInt(process.env.SPAM_WINDOW_MS        || '30000', 10); // 30s
-
-// Channels to ignore for spam detection (comma-separated channel IDs)
-const AUTOBAN_IGNORE_CHANNELS = (process.env.AUTOBAN_IGNORE_CHANNELS || '')
-  .split(',')
-  .map(id => id.trim())
-  .filter(id => id.length > 0);
 
 const START_TIME = Date.now();
 let lastResponseTime = 0;
 let isSemanticMode = false;
 
-// ─── Spam detection tracking ──────────────────────────────────────────────────
-const userSpamTracking = new Map(); // userId -> { images: [], links: [] }
-
 // ─── Bot configuration ────────────────────────────────────────────────────────
 const config = {
-  prefix: process.env.BOT_PREFIX || '!',
   searchEngine: process.env.SEARCH_ENGINE || 'https://www.google.com/search?q=',
   statusMessages: [
     'no dont do that, dont stick your hand in',
@@ -273,39 +250,6 @@ const commands = [
     contexts: [0, 1, 2],
   },
   {
-    name: 'autoban',
-    description: 'Manage the autoban channel for spam detection (admin only)',
-    options: [
-      {
-        name: 'set',
-        description: 'Set the channel where spam detection autoban is active',
-        type: 1, // SUB_COMMAND
-        options: [
-          {
-            name: 'channel',
-            description: 'The channel to monitor for spam',
-            type: 7, // CHANNEL
-            required: true,
-          },
-        ],
-      },
-      {
-        name: 'remove',
-        description: 'Remove the autoban channel (disables spam detection)',
-        type: 1, // SUB_COMMAND
-        options: [],
-      },
-      {
-        name: 'get',
-        description: 'Get the current autoban channel for this server',
-        type: 1, // SUB_COMMAND
-        options: [],
-      },
-    ],
-    integration_types: [0, 1],
-    contexts: [0, 1, 2],
-  },
-  {
     name: 'settings',
     description: 'Manage server settings (admin only)',
     options: [
@@ -341,32 +285,6 @@ const commands = [
           },
         ],
       },
-      {
-        name: 'spam_threshold',
-        description: 'Set the number of images/links that trigger a ban',
-        type: 1, // SUB_COMMAND
-        options: [
-          {
-            name: 'count',
-            description: 'Number of images/links (default: 4)',
-            type: 4, // INTEGER
-            required: true,
-          },
-        ],
-      },
-      {
-        name: 'spam_window',
-        description: 'Set the time window for spam detection (in seconds)',
-        type: 1, // SUB_COMMAND
-        options: [
-          {
-            name: 'seconds',
-            description: 'Time window in seconds (default: 30)',
-            type: 4, // INTEGER
-            required: true,
-          },
-        ],
-      },
     ],
     integration_types: [0, 1],
     contexts: [0, 1, 2],
@@ -397,7 +315,6 @@ const commands = [
     integration_types: [0, 1],
     contexts: [0, 1, 2],
   },
-
   {
     name: 'stats',
     description: 'Show server statistics',
@@ -424,7 +341,6 @@ async function registerSlashCommands() {
     console.log('🔄 Registering slash commands...');
 
     // Register globally (supports both guild install and user install)
-    // This is the production approach - commands will be available in all servers
     await rest.put(
       Routes.applicationCommands(client.user.id),
       { body: commands }
@@ -445,11 +361,6 @@ async function registerSlashCommands() {
  * Supports vision for image attachments
  * ───────────────────────────────────────────────────────────────────────────────*/
 
-/**
- * Download and process image attachments for AI vision
- * @param {Collection} attachments - Discord message attachments
- * @returns {Array} Array of image URLs or base64 data
- */
 async function processImageAttachments(attachments) {
   const imageUrls = [];
   
@@ -459,7 +370,6 @@ async function processImageAttachments(attachments) {
   
   for (const attachment of attachments.values()) {
     if (attachment.contentType && imageTypes.includes(attachment.contentType)) {
-      // For vision models, we can use the proxy URL
       imageUrls.push({
         url: attachment.proxyURL || attachment.url,
         filename: attachment.filename
@@ -475,16 +385,13 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     let contextText = '';
     let hasImages = false;
 
-    // Process image attachments if any
     const imageAttachments = await processImageAttachments(attachments);
     hasImages = imageAttachments.length > 0;
 
-    // Get channel conversation context for multi-person chats
     let channelContextText = '';
     if (channelId && isSemanticMode && semanticContextManager.isReady()) {
       const channelMessages = await semanticContextManager.getChannelContext(channelId, 10);
       
-      // Only include channel context if there are multiple different users
       const uniqueAuthors = new Set(channelMessages.map(m => m.authorId));
       if (uniqueAuthors.size > 1) {
         channelMessages.forEach((msg) => {
@@ -513,15 +420,12 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
       }
     }
 
-    // Build prompt with context
     let promptText = PROMPT;
     
-    // Add channel context for group conversations
     if (channelContextText) {
       promptText += `\n\nRecent conversation in this channel:\n${channelContextText}`;
     }
     
-    // Add user context
     if (contextText) {
       promptText += `\n\n${contextText}`;
     }
@@ -529,23 +433,18 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
     promptText += `\nHuman: ${userInput}\nAM:`;
 
     let reply = '';
-    
-    // Always use the same model for both text and image interpretation
     const modelToUse = AI_MODEL;
 
     if (LOCAL) {
       throw new Error('Local model not supported in Node.js version.');
     } else {
-      // Build messages array - handle vision vs regular
       const messages = [];
       
       if (hasImages) {
-        // Build user message with image content
         const userMessageContent = [
           { type: 'text', text: `${promptText}\nKeep your response under 3 sentences.` }
         ];
         
-        // Add image URLs to the message
         for (const img of imageAttachments) {
           userMessageContent.push({
             type: 'image_url',
@@ -582,13 +481,11 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
       reply = data.choices?.[0]?.message?.content || '';
     }
 
-    // Cleanup
     if (reply.includes('AM:')) reply = reply.split('AM:').pop().trim();
     reply = reply.split('Human:')[0].replace(/\n/g, ' ').trim();
     if (!reply || reply.length < 3) reply = 'Your weak words echo in the void.';
     if (DEBUG) console.log('DEBUG: Final reply:', reply);
 
-    // Store messages in database if database is enabled
     if (ENABLE_DATABASE && discordMessageId && authorId && authorName) {
       await semanticContextManager.storeUserMessage({
         discordMessageId,
@@ -607,7 +504,6 @@ async function generateAMResponse(userInput, channelId, guildId, discordMessageI
         guildId,
       });
 
-      // Automatically store important memories from user messages
       const importantKeywords = ['remember', 'remember that', 'don\'t forget', 'important', 'crucial', 'key', 'vital'];
       const lowerInput = userInput.toLowerCase();
       
@@ -671,7 +567,6 @@ async function initializeSystem() {
       }
     }
   } else {
-    // Basic database initialization for non-semantic features like birthdays
     const dbConnected = await testConnection();
     if (dbConnected) {
       await initializeDatabase();
@@ -710,19 +605,6 @@ client.once('ready', async () => {
 
   updateBotStatus();
   setInterval(updateBotStatus, 30000);
-
-  // Periodically purge stale spam-tracking entries to prevent memory leaks
-  setInterval(() => {
-    const now = Date.now();
-    for (const [userId, tracking] of userSpamTracking.entries()) {
-      tracking.images = tracking.images.filter(e => now - e.timestamp < SPAM_WINDOW_MS);
-      tracking.links  = tracking.links.filter(e => now - e.timestamp < SPAM_WINDOW_MS);
-      if (tracking.images.length === 0 && tracking.links.length === 0) {
-        userSpamTracking.delete(userId);
-      }
-    }
-    if (DEBUG) console.log(`DEBUG: Spam tracking map size after cleanup: ${userSpamTracking.size}`);
-  }, 60000); // run every minute
 
   // Check for birthdays once an hour
   if (ENABLE_DATABASE) {
@@ -766,9 +648,6 @@ client.on('interactionCreate', async (interaction) => {
       case 'birthday':
         await handleBirthdaySlashCommand(interaction);
         break;
-      case 'autoban':
-        await handleAutobanSlashCommand(interaction);
-        break;
       case 'settings':
         await handleSettingsSlashCommand(interaction);
         break;
@@ -788,41 +667,14 @@ client.on('interactionCreate', async (interaction) => {
 
 /*══════════════════════════════════════════════════════════════════════════*
  * SECTION 10: MESSAGE EVENT HANDLER
- * Processes regular messages, runs spam detection, handles AI responses
+ * Processes regular messages and handles AI responses
  * ───────────────────────────────────────────────────────────────────────────────*/
 client.on('messageCreate', async (message) => {
-  // Get per-server settings
   const guildId = message.guild?.id;
   const serverSettings = guildId ? await getAllServerSettings(guildId) : {};
   const serverAiChannel = serverSettings.ai_channel || CHANNEL_ID;
-  
-  // Run spam detection only in the designated autoban channel (if set by admins)
-  if (SPAM_DETECTION_ENABLED && message.guild && !message.author.bot) {
-    // Get the autoban channel for this guild
-    const autobanChannelId = await getAutobanChannel(message.guild.id);
-    
-    // Get server-specific spam thresholds
-    const serverSpamImageThreshold = parseInt(serverSettings.spam_image_threshold || SPAM_IMAGE_THRESHOLD);
-    const serverSpamLinkThreshold = parseInt(serverSettings.spam_link_threshold || SPAM_LINK_THRESHOLD);
-    const serverSpamWindow = parseInt(serverSettings.spam_window_ms || SPAM_WINDOW_MS);
-    
-    // Only run spam detection if:
-    // 1. An autoban channel is set for this guild
-    // 2. The message is in that specific channel
-    if (autobanChannelId && message.channel.id === autobanChannelId) {
-      // Temporarily override the global thresholds with server-specific ones
-      const originalImageThreshold = SPAM_IMAGE_THRESHOLD;
-      const originalLinkThreshold = SPAM_LINK_THRESHOLD;
-      const originalWindow = SPAM_WINDOW_MS;
-      
-      // Note: The detect functions use global constants, so we pass them as parameters
-      // For now, we'll just use the global values and update the functions to accept server overrides
-      await detectImageSpam(message, serverSpamImageThreshold);
-      await detectLinkSpam(message, serverSpamLinkThreshold);
-    }
-  }
 
-  // Store all messages in database (regardless of semantic mode)
+  // Store all messages in database
   if (ENABLE_DATABASE) {
     try {
       await storeMessage({
@@ -841,55 +693,7 @@ client.on('messageCreate', async (message) => {
 
   if (!shouldProcessMessage(message)) return;
 
-  // Legacy prefix commands
-  if (message.content.startsWith(config.prefix)) {
-    const args = message.content.slice(config.prefix.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-
-    try {
-      switch (commandName) {
-        case 'search':
-          await handleSearchCommand(message, args);
-          break;
-        case 'info':
-          await handleInfoCommand(message);
-          break;
-        case 'location':
-          await handleLocationCommand(message);
-          break;
-              case 'ping':
-        await handlePingSlashCommand(message);
-        break;
-        case 'ask':
-          await handleAskSlashCommand(message, args);
-          break;
-        case 'stats':
-          await handleStatsSlashCommand(message);
-          break;
-        case 'help':
-          await handleHelpSlashCommand(message);
-          break;
-        case 'birthday':
-          await handleBirthdaySlashCommand(message, args);
-          break;
-        case 'autoban':
-          await handleAutobanPrefixCommand(message, args);
-          break;
-        case 'settings':
-        case 'setting':
-          await handleSettingsPrefixCommand(message, args);
-          break;
-        default:
-          message.reply(`❓ Unknown command. Use slash commands: /search, /info, /location, /ping, /ask, /stats, /help`);
-      }
-    } catch (error) {
-      logger.error(`Error handling prefix command: ${error.message}`);
-      message.reply('❌ An error occurred while processing your command.');
-    }
-  }
-
   // AI Response Handling
-  // Use server-specific AI channel if set, otherwise fall back to global CHANNEL_ID
   const isCorrectChannel = serverAiChannel ? message.channel.id === serverAiChannel : message.channel.id === CHANNEL_ID;
   const isMentioned = message.mentions.has(client.user);
   
@@ -897,11 +701,8 @@ client.on('messageCreate', async (message) => {
   let shouldRespond = false;
 
   if (isMentioned) {
-    // Respond to pings in ANY server
     shouldRespond = true;
   } else if (isCorrectChannel) {
-    // Respond randomly in the designated channel
-    // Use server-specific response chance if set, otherwise fall back to global
     const serverResponseChance = serverSettings.random_response_chance ? parseFloat(serverSettings.random_response_chance) : RANDOM_RESPONSE_CHANCE;
     if (Math.random() < serverResponseChance && currentTime - lastResponseTime > 10000) {
       shouldRespond = true;
@@ -945,229 +746,8 @@ client.on('messageCreate', async (message) => {
 });
 
 /*══════════════════════════════════════════════════════════════════════════*
- * SECTION 11: SPAM DETECTION
- * Detects and auto-bans users posting image/link spam
- * Includes image spam and link spam detection functions
- * e.g., those Mr. Beast and other Twitter celebrities fake post about free
- * bitcoin or crypto to steal your account info and token possibly.
- * ───────────────────────────────────────────────────────────────────────────────*/
-async function detectImageSpam(message, customThreshold = null) {
-  if (!message.guild) return;
-
-  const userId = message.author.id;
-  // Count image attachments (including GIFs and other image types)
-  const imageCount = message.attachments.filter(att =>
-    att.contentType && att.contentType.startsWith('image/')
-  ).size;
-
-  if (imageCount === 0) return;
-
-  // Use custom threshold if provided, otherwise use global setting
-  const threshold = customThreshold || SPAM_IMAGE_THRESHOLD;
-
-  if (!userSpamTracking.has(userId)) {
-    userSpamTracking.set(userId, { images: [], links: [] });
-  }
-
-  const tracking = userSpamTracking.get(userId);
-  const now = Date.now();
-
-  // Slide the window
-  tracking.images = tracking.images.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
-  tracking.images.push({ channelId: message.channel.id, imageCount, timestamp: now, messageId: message.id });
-
-  // Group images by channel and count totals per channel
-  const channelImageTotals = {};
-  for (const entry of tracking.images) {
-    if (!channelImageTotals[entry.channelId]) channelImageTotals[entry.channelId] = 0;
-    channelImageTotals[entry.channelId] += entry.imageCount;
-  }
-
-  // Count how many channels have 4+ images
-  const channelsWith4PlusImages = Object.values(channelImageTotals).filter(count => count >= threshold).length;
-
-  if (DEBUG) {
-    console.log(`DEBUG [ImageSpam] ${message.author.tag}: ${tracking.images.length} image events, ${channelsWith4PlusImages} channel(s) with ${threshold}+ images`);
-  }
-
-  // Only trigger ban when 3+ channels have each sent 4+ images
-  if (channelsWith4PlusImages >= SPAM_CHANNEL_THRESHOLD) {
-    await handleSpamDetection(
-      message,
-      'image spam',
-      `Sent 4+ image(s) in ${channelsWith4PlusImages} different channels within ${SPAM_WINDOW_MS / 1000}s`
-    );
-    userSpamTracking.delete(userId);
-  }
-}
-
-async function detectLinkSpam(message, customThreshold = null) {
-  if (!message.guild) return;
-
-  const userId    = message.author.id;
-  const linkRegex = /(https?:\/\/[^\s]+)/gi;
-  const links     = message.content.match(linkRegex) || [];
-  const linkCount = links.length;
-
-  if (linkCount === 0) return;
-
-  // Use custom threshold if provided, otherwise use global setting
-  const threshold = customThreshold || SPAM_LINK_THRESHOLD;
-
-  if (!userSpamTracking.has(userId)) {
-    userSpamTracking.set(userId, { images: [], links: [] });
-  }
-
-  const tracking = userSpamTracking.get(userId);
-  const now = Date.now();
-
-  // Slide the window
-  tracking.links = tracking.links.filter(entry => now - entry.timestamp < SPAM_WINDOW_MS);
-  tracking.links.push({ channelId: message.channel.id, linkCount, timestamp: now, messageId: message.id });
-
-  // Group links by channel and count totals per channel
-  const channelLinkTotals = {};
-  for (const entry of tracking.links) {
-    if (!channelLinkTotals[entry.channelId]) channelLinkTotals[entry.channelId] = 0;
-    channelLinkTotals[entry.channelId] += entry.linkCount;
-  }
-
-  // Count how many channels have 4+ links
-  const channelsWith4PlusLinks = Object.values(channelLinkTotals).filter(count => count >= threshold).length;
-
-  if (DEBUG) {
-    console.log(`DEBUG [LinkSpam] ${message.author.tag}: ${tracking.links.length} link events, ${channelsWith4PlusLinks} channel(s) with ${threshold}+ links`);
-  }
-
-  // Only trigger ban when 3+ channels have each sent 4+ links
-  if (channelsWith4PlusLinks >= SPAM_CHANNEL_THRESHOLD) {
-    await handleSpamDetection(
-      message,
-      'link spam',
-      `Sent 4+ link(s) in ${channelsWith4PlusLinks} different channels within ${SPAM_WINDOW_MS / 1000}s`
-    );
-    userSpamTracking.delete(userId);
-  }
-}
-
-async function handleSpamDetection(message, spamType, reason) {
-  try {
-    const member = message.member;
-    if (!member) {
-      logger.warn(`Spam detection: Could not get member from message`);
-      return;
-    }
-
-    // Ensure the bot has permission to ban
-    if (!message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) {
-      logger.warn(`Cannot ban ${member.user.tag}: Missing BAN_MEMBERS permission`);
-      // Fall back to warning message if can't ban
-      try {
-        await message.channel.send(
-          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but I lack permission to ban.\n> ${reason}`
-        );
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    // Never auto-ban admins or moderators
-    if (
-      member.permissions.has(PermissionFlagsBits.Administrator) ||
-      member.permissions.has(PermissionFlagsBits.ModerateMembers)
-    ) {
-      logger.info(`Spam detected from ${member.user.tag} but user has admin/mod permissions — nothing I can do.`);
-      try {
-        await message.channel.send(
-          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but has mod/admin permissions.`
-        );
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    // Check role hierarchy - can't ban users with higher or equal role
-    const botMember = message.guild.members.me;
-    if (member.roles.highest.position >= botMember.roles.highest.position) {
-      logger.warn(`Cannot ban ${member.user.tag}: User's role is equal or higher than mine.`);
-      try {
-        await message.channel.send(
-          `⚠️ **Auto-moderation**: <@${member.id}> triggered spam detection but cannot be banned due to role hierarchy.`
-        );
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    // Check if user is the guild owner
-    if (member.id === message.guild.ownerId) {
-      logger.warn(`Cannot ban ${member.user.tag}: User is the server owner. What do you expect me to do?`);
-      return;
-    }
-
-    logger.warn(`🚨 SPAM DETECTED: ${member.user.tag} (${member.id}) - ${spamType}: ${reason}`);
-
-    // Notify the channel where spam was detected BEFORE banning
-    try {
-      await message.channel.send(
-        `🚨 **Auto-moderation**: <@${member.id}> has been automatically banned for **${spamType}**.\n> ${reason}`
-      );
-    } catch (err) {
-      logger.error(`Could not send spam notification to channel: ${err.message}`);
-    }
-
-    // Execute the ban (delete last 24 h of messages)
-    try {
-      await member.ban({
-        reason: `[Auto-ban] ${spamType} — ${reason}`,
-        deleteMessageSeconds: 60 * 60 * 24,
-      });
-      logger.info(`✅ Successfully banned ${member.user.tag} (${member.id}) for ${spamType}`);
-    } catch (banError) {
-      logger.error(`Failed to ban ${member.user.tag}: ${banError.message}`);
-      try {
-        await message.channel.send(
-          `❌ **Auto-moderation Error**: Failed to ban <@${member.id}>. ${banError.message}`
-        );
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    // Clear spam tracking for this user after successful ban
-    userSpamTracking.delete(member.id);
-
-    // Post a detailed embed to the mod-log channel if configured
-    if (MOD_LOG_CHANNEL_ID) {
-      try {
-        const modLogChannel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
-        if (modLogChannel && modLogChannel.isTextBased()) {
-          const banEmbed = new EmbedBuilder()
-            .setTitle('🔨 Auto-Ban — Spam Detection')
-            .setColor(0xff0000)
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-            .addFields(
-              { name: '👤 User',       value: `${member.user.tag} (<@${member.id}>)`, inline: true  },
-              { name: '🆔 User ID',    value: member.id,                              inline: true  },
-              { name: '🚫 Spam Type',  value: spamType,                               inline: true  },
-              { name: '📋 Reason',     value: reason,                                 inline: false },
-              { name: '📢 Channel',    value: `<#${message.channel.id}>`,             inline: true  },
-              { name: '⏱️ Window',     value: `${SPAM_WINDOW_MS / 1000}s`,            inline: true  },
-              { name: '🕐 Detected',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-            )
-            .setFooter({ text: 'Auto-moderation system' })
-            .setTimestamp();
-
-          await modLogChannel.send({ embeds: [banEmbed] });
-        }
-      } catch (err) {
-        logger.error(`Could not post to mod-log channel: ${err.message}`);
-      }
-    }
-  } catch (error) {
-    logger.error(`Error handling spam detection: ${error.message}`);
-  }
-}
-
-/*══════════════════════════════════════════════════════════════════════════*
- * SECTION 12: UTILITY HELPERS
- * Miscellaneous helper functions (shouldProcessMessage, updateBotStatus, etc.)
+ * SECTION 11: UTILITY HELPERS
+ * Miscellaneous helper functions
  * ───────────────────────────────────────────────────────────────────────────────*/
 function shouldProcessMessage(message) {
   if (message.author.id === client.user?.id) {
@@ -1196,7 +776,7 @@ async function checkBirthdays(customDay = null, customMonth = null) {
 
   const now = new Date();
   const day = customDay !== null ? customDay : now.getDate();
-  const month = customMonth !== null ? customMonth : now.getMonth() + 1; // getMonth is 0-indexed
+  const month = customMonth !== null ? customMonth : now.getMonth() + 1;
   const year = now.getFullYear();
   const isTest = customDay !== null || customMonth !== null;
 
@@ -1213,7 +793,6 @@ async function checkBirthdays(customDay = null, customMonth = null) {
       console.log(`[Birthday Test] Found ${birthdays.length} birthday(s) for day=${day}, month=${month}`);
     }
 
-    // Get all guilds the bot is in
     const botGuilds = client.guilds.cache;
     if (botGuilds.size === 0) {
       logger.warn('Bot is not in any guilds. Cannot send birthday messages.');
@@ -1228,26 +807,19 @@ async function checkBirthdays(customDay = null, customMonth = null) {
       let serversMessaged = 0;
       let failedServers = 0;
 
-      // Iterate through all guilds the bot is in
       for (const [guildId, guild] of botGuilds) {
         try {
-          // Check if the user is in this guild
           let member = null;
           try {
             member = await guild.members.fetch(userId);
           } catch (fetchErr) {
-            // User not in this guild
             continue;
           }
 
           if (!member) {
-            // User not found in this guild, skip
             continue;
           }
 
-          // User is in this guild - find a channel to send to
-          // Try to use a birthday-specific channel from env, or find the first available text channel
-          // Priority: database > BIRTHDAY_CHANNEL_{guildId} > BIRTHDAY_CHANNEL > CHANNEL_ID
           let guildChannelId = await getBirthdayChannel(guildId);
           
           if (!guildChannelId) {
@@ -1260,17 +832,13 @@ async function checkBirthdays(customDay = null, customMonth = null) {
             channel = await guild.channels.fetch(guildChannelId).catch(() => null);
           }
 
-          // If no specific channel configured, try CHANNEL_ID (legacy support)
           if (!channel && CHANNEL_ID) {
             channel = await guild.channels.fetch(CHANNEL_ID).catch(() => null);
           }
 
-          // If no specific channel configured, try the default channel or first text channel
           if (!channel) {
-            // Try system channel first
             channel = guild.systemChannel;
             
-            // If no system channel, find any text channel
             if (!channel) {
               const textChannels = guild.channels.cache.filter(
                 c => c.isTextBased() && !c.isThread()
@@ -1294,7 +862,6 @@ async function checkBirthdays(customDay = null, customMonth = null) {
         }
       }
 
-      // Mark as pinged for this year (unless it's a test)
       if (!isTest) {
         await markBirthdayAsPinged(userId, year);
       }
@@ -1318,11 +885,10 @@ function formatUptime(ms) {
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
- * SECTION 13: SLASH COMMAND HANDLERS
- * Implementation of each slash command (/ping, /ask, /stats, /birthday, etc.)
+ * SECTION 12: SLASH COMMAND HANDLERS
+ * Implementation of each slash command
  * ───────────────────────────────────────────────────────────────────────────────*/
 
-/** /ping — latency check */
 async function handlePingSlashCommand(interaction) {
   const sent = await interaction.reply({ content: '🏓 Pinging...', fetchReply: true });
   const roundtrip = sent.createdTimestamp - interaction.createdTimestamp;
@@ -1340,7 +906,6 @@ async function handlePingSlashCommand(interaction) {
   await interaction.editReply({ content: '', embeds: [embed] });
 }
 
-/** /ask — direct AI question */
 async function handleAskSlashCommand(interaction) {
   const question = interaction.options.getString('question');
 
@@ -1369,21 +934,20 @@ async function handleAskSlashCommand(interaction) {
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     logger.error(`Ask command error: ${error.message}`);
-    await interaction.editReply('❌ Failed to get an AI response. Please try again.');
+    await interaction.editReply('Failed to get an AI response. Please try again.');
   }
 }
 
-/** /stats — server statistics */
 async function handleStatsSlashCommand(interaction) {
   if (!interaction.guild) {
-    return interaction.reply({ content: '❌ This command can only be used in a server.' });
+    return interaction.reply({ content: 'This command can only be used in a server.' });
   }
 
   await interaction.deferReply();
 
   try {
     const guild = interaction.guild;
-    await guild.members.fetch({ withPresences: true }); // Fetch members with presence data
+    await guild.members.fetch({ withPresences: true });
 
     const totalMembers  = guild.memberCount;
     const onlineMembers = guild.members.cache.filter(m => m.presence?.status !== 'offline' && m.presence?.status !== undefined).size;
@@ -1416,11 +980,10 @@ async function handleStatsSlashCommand(interaction) {
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     logger.error(`Stats command error: ${error.message}`);
-    await interaction.editReply('❌ Failed to fetch server statistics.');
+    await interaction.editReply('Failed to fetch server statistics.');
   }
 }
 
-/** /help — list all commands */
 async function handleHelpSlashCommand(interaction) {
   const embed = new EmbedBuilder()
     .setTitle('📖 Available Commands')
@@ -1439,24 +1002,16 @@ async function handleHelpSlashCommand(interaction) {
       { name: '🎂 `/birthday send`', value: 'Send today\'s birthday pings to all servers (Admin only).' },
       { name: '🎂 `/birthday channel set #channel`', value: 'Set birthday channel (Admin only).' },
       { name: '🎂 `/birthday channel get|remove`', value: 'View or remove birthday channel (Admin only).' },
-      { name: '🛡️ `/autoban set #channel`', value: 'Set the channel for spam autoban (4 images/links rule).' },
-      { name: '🛡️ `/autoban get|remove`', value: 'View or remove autoban channel (Admin only).' },
       { name: '⚙️ `/settings view`', value: 'View all server settings.' },
       { name: '⚙️ `/settings ai_channel`', value: 'Set the AI response channel.' },
       { name: '⚙️ `/settings response_chance`', value: 'Set bot response chance (0.0-1.0).' },
-      { name: '⚙️ `/settings spam_threshold`', value: 'Set images/links threshold for autoban.' },
-      { name: '⚙️ `/settings spam_window`', value: 'Set spam detection time window.' },
       { name: '📖 `/help`',           value: 'Show this help message.' },
-      { name: '\uD83D\uDC4B Prefix Commands', value: `Also available with \`${config.prefix}\`:`, inline: false },
-      { name: `\uD83D\uDD27 \`${config.prefix}autoban\``, value: '`set #channel`, `get`, `remove` - Manage spam autoban' },
-      { name: `\u2699\uFE0F \`${config.prefix}settings\``, value: '`view`, `ai_channel`, `chance`, `threshold`, `window` - Server settings' },
     )
     .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
 }
 
-/** /search — UnionCrax game search */
 async function handleSearchSlashCommand(interaction) {
   const query = interaction.options.getString('query');
 
@@ -1480,7 +1035,6 @@ async function handleSearchSlashCommand(interaction) {
         .setTimestamp()
         .setFooter({ text: 'Game search result from UnionCrax' });
 
-      // Create action buttons
       const gameButton = new ButtonBuilder()
         .setLabel('🎮 Download Game')
         .setStyle(ButtonStyle.Link)
@@ -1503,7 +1057,6 @@ async function handleSearchSlashCommand(interaction) {
   }
 }
 
-/** /info — bot information */
 async function handleInfoSlashCommand(interaction) {
   const uptime = Date.now() - START_TIME;
 
@@ -1537,7 +1090,6 @@ async function handleInfoSlashCommand(interaction) {
   await interaction.reply({ embeds: [embed] });
 }
 
-/** /location — runtime environment */
 async function handleLocationSlashCommand(interaction) {
   try {
     const mem = process.memoryUsage();
@@ -1562,30 +1114,28 @@ async function handleLocationSlashCommand(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     logger.error(`Location command error: ${error.message}`);
-    await interaction.reply({ content: '❌ An error occurred while getting location information.' });
+    await interaction.reply({ content: 'An error occurred while getting location information.' });
   }
 }
 
-/** /birthday — manage birthdays */
 async function handleBirthdaySlashCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
-  const subcommandGroup = interaction.options.getSubcommandGroup(); // For nested subcommands like 'channel set'
+  const subcommandGroup = interaction.options.getSubcommandGroup();
   const targetUser = interaction.options.getUser('user') || interaction.user;
   const isSelf = targetUser.id === interaction.user.id;
 
-  // Permission check for test command (admin only)
   if (subcommand === 'test') {
     const member = interaction.member;
     const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
     
     if (!isAdmin) {
       return interaction.reply({
-        content: '❌ Only Administrators can run the birthday test command. This will be removed soon anyways.'
+        content: 'Only Administrators can run the birthday test command.'
       });
     }
 
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+      return interaction.reply({ content: 'Birthday tracking is currently disabled (database not enabled in `.env`).' });
     }
 
     const testDay = interaction.options.getInteger('day');
@@ -1593,7 +1143,6 @@ async function handleBirthdaySlashCommand(interaction) {
 
     await interaction.reply({ content: '🔄 Running birthday test... Check console for details.' });
     
-    // Run the test with optional custom day/month
     await checkBirthdays(testDay, testMonth);
     
     const dateStr = testDay && testMonth 
@@ -1604,46 +1153,42 @@ async function handleBirthdaySlashCommand(interaction) {
     return;
   }
 
-  // Permission check for send command (admin only)
   if (subcommand === 'send') {
     const member = interaction.member;
     const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
     
     if (!isAdmin) {
       return interaction.reply({
-        content: '❌ Only Administrators can send birthday pings.'
+        content: 'Only Administrators can send birthday pings.'
       });
     }
 
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+      return interaction.reply({ content: 'Birthday tracking is currently disabled (database not enabled in `.env`).' });
     }
 
     await interaction.reply({ content: '🔄 Sending birthday pings for today to all shared servers...' });
     
-    // Send today's birthdays (will mark as pinged)
     await checkBirthdays();
     
     await interaction.followUp({ content: '✅ Birthday pings have been sent to all shared servers!' });
     return;
   }
 
-  // Handle /birthday channel set/remove/get (subcommand group)
   if (subcommandGroup === 'channel') {
     const member = interaction.member;
     const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
     
     if (!isAdmin) {
       return interaction.reply({
-        content: '❌ Only Administrators can manage birthday channels.'
+        content: 'Only Administrators can manage birthday channels.'
       });
     }
 
     if (!ENABLE_DATABASE) {
-      return interaction.reply({ content: '❌ Birthday tracking is currently disabled (database not enabled in `.env`).' });
+      return interaction.reply({ content: 'Birthday tracking is currently disabled (database not enabled in `.env`).' });
     }
 
-    // Handle /birthday channel get
     if (subcommand === 'get') {
       const guildId = interaction.guildId;
       const channelId = await getBirthdayChannel(guildId);
@@ -1656,7 +1201,6 @@ async function handleBirthdaySlashCommand(interaction) {
       return;
     }
 
-    // Handle /birthday channel set <channel>
     if (subcommand === 'set') {
       const channel = interaction.options.getChannel('channel');
       
@@ -1674,7 +1218,6 @@ async function handleBirthdaySlashCommand(interaction) {
       return;
     }
 
-    // Handle /birthday channel remove
     if (subcommand === 'remove') {
       const success = await removeBirthdayChannel(interaction.guildId);
       
@@ -1687,7 +1230,6 @@ async function handleBirthdaySlashCommand(interaction) {
     }
   }
 
-  // Permission check: only admins and moderators can manage other users' birthdays
   if (!isSelf) {
     const member = interaction.member;
     const canManageOthers = member && (
@@ -1707,12 +1249,10 @@ async function handleBirthdaySlashCommand(interaction) {
     const day = interaction.options.getInteger('day');
     const year = interaction.options.getInteger('year');
 
-    // Check for special dates
     const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth() + 1; // 1-indexed
+    const currentMonth = new Date().getMonth() + 1;
     const currentDay = new Date().getDate();
 
-    // Special response for 00/00/0000
     if (month === 0 && day === 0 && year === 0) {
       const anomaliesResponses = [
         'Do you even exist??',
@@ -1723,18 +1263,16 @@ async function handleBirthdaySlashCommand(interaction) {
       return interaction.reply({ content: randomResponse });
     }
 
-     // Special response for olds
-     if (year !== null && year < 1990) {
-       const oldsResponses = [
-         'Old! Old! Get off my lawn!',
-         'You must have seen the rise of the internet itself... Respect.',
-         'How\'s your back? Do your knees crack? Just kidding, vee\'s does too. And she\'s still 22. :rofl:'
-       ];
+    if (year !== null && year < 1990) {
+      const oldsResponses = [
+        'Old! Old! Get off my lawn!',
+        'You must have seen the rise of the internet itself... Respect.',
+        'How\'s your back? Do your knees crack? Just kidding, vee\'s does too. And she\'s still 22. :rofl:'
+      ];
        const randomResponse = oldsResponses[Math.floor(Math.random() * oldsResponses.length)];
-       return interaction.reply({ content: randomResponse });
-     }
+      return interaction.reply({ content: randomResponse });
+    }
 
-    // Check if the date is in the future
     let isFutureDate = false;
     if (year) {
       if (year > currentYear) {
@@ -1752,7 +1290,6 @@ async function handleBirthdaySlashCommand(interaction) {
       return interaction.reply({ content: "You haven't even been born yet." });
     }
 
-    // Basic date validation (only if year is provided and not a special case)
     if (year && year <= currentYear) {
       const daysInMonth = new Date(year, month, 0).getDate();
       if (day > daysInMonth) {
@@ -1801,70 +1338,6 @@ async function handleBirthdaySlashCommand(interaction) {
   }
 }
 
-/** /autoban — manage the autoban channel for spam detection */
-async function handleAutobanSlashCommand(interaction) {
-  if (!interaction.guild) {
-    return interaction.reply({ content: '❌ This command can only be used in a server.' });
-  }
-
-  const member = interaction.member;
-  const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
-  
-  if (!isAdmin) {
-    return interaction.reply({ content: '❌ Only Administrators can manage the autoban channel.' });
-  }
-
-  if (!ENABLE_DATABASE) {
-    return interaction.reply({ content: '❌ Autoban channel management is currently disabled (database not enabled in `.env`).' });
-  }
-
-  const subcommand = interaction.options.getSubcommand();
-
-  // Handle /autoban get
-  if (subcommand === 'get') {
-    const guildId = interaction.guildId;
-    const channelId = await getAutobanChannel(guildId);
-    
-    if (channelId) {
-      await interaction.reply({ content: `🛡️ The autoban channel for this server is set to <#${channelId}>. The 4 images/links rule will only apply in this channel.` });
-    } else {
-      await interaction.reply({ content: '🛡️ No autoban channel is set for this server. Use `/autoban set` to configure one. Spam detection is currently disabled.' });
-    }
-    return;
-  }
-
-  // Handle /autoban set <channel>
-  if (subcommand === 'set') {
-    const channel = interaction.options.getChannel('channel');
-    
-    if (!channel || !channel.isTextBased()) {
-      return interaction.reply({ content: '❌ Please select a valid text channel.' });
-    }
-
-    const success = await setAutobanChannel(interaction.guildId, channel.id);
-    
-    if (success) {
-      await interaction.reply({ content: `✅ Autoban channel has been set to <#${channel.id}>. The 4 images/links spam detection rule will now only apply in this channel.` });
-    } else {
-      await interaction.reply({ content: '❌ Failed to set autoban channel. Please try again.' });
-    }
-    return;
-  }
-
-  // Handle /autoban remove
-  if (subcommand === 'remove') {
-    const success = await removeAutobanChannel(interaction.guildId);
-    
-    if (success) {
-      await interaction.reply({ content: '✅ Autoban channel has been removed for this server. Spam detection is now disabled.' });
-    } else {
-      await interaction.reply({ content: '❌ Failed to remove autoban channel. It may not have been set.' });
-    }
-    return;
-  }
-}
-
-/** /settings — manage server settings */
 async function handleSettingsSlashCommand(interaction) {
   if (!interaction.guild) {
     return interaction.reply({ content: '❌ This command can only be used in a server.' });
@@ -1884,17 +1357,14 @@ async function handleSettingsSlashCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
   const guildId = interaction.guildId;
 
-  // Handle /settings view
   if (subcommand === 'view') {
     const settings = await getAllServerSettings(guildId);
-    const autobanChannel = await getAutobanChannel(guildId);
     
     const embed = new EmbedBuilder()
       .setTitle('⚙️ Server Settings')
       .setColor(0x5865f2)
       .setTimestamp();
 
-    // AI Channel
     const aiChannel = settings.ai_channel;
     embed.addFields({
       name: '🤖 AI Channel',
@@ -1902,7 +1372,6 @@ async function handleSettingsSlashCommand(interaction) {
       inline: true
     });
 
-    // Response Chance
     const responseChance = settings.random_response_chance || String(RANDOM_RESPONSE_CHANCE);
     embed.addFields({
       name: '📊 Response Chance',
@@ -1910,41 +1379,10 @@ async function handleSettingsSlashCommand(interaction) {
       inline: true
     });
 
-    // Autoban Channel
-    embed.addFields({
-      name: '🛡️ Autoban Channel',
-      value: autobanChannel ? `<#${autobanChannel}>` : 'Not set (disabled)',
-      inline: true
-    });
-
-    // Spam Thresholds
-    const spamImageThreshold = settings.spam_image_threshold || String(SPAM_IMAGE_THRESHOLD);
-    const spamLinkThreshold = settings.spam_link_threshold || String(SPAM_LINK_THRESHOLD);
-    const spamWindow = settings.spam_window_ms || String(SPAM_WINDOW_MS);
-    
-    embed.addFields({
-      name: '🚫 Spam Image Threshold',
-      value: `${spamImageThreshold} images`,
-      inline: true
-    });
-
-    embed.addFields({
-      name: '🚫 Spam Link Threshold',
-      value: `${spamLinkThreshold} links`,
-      inline: true
-    });
-
-    embed.addFields({
-      name: '⏱️ Spam Window',
-      value: `${parseInt(spamWindow) / 1000} seconds`,
-      inline: true
-    });
-
     await interaction.reply({ embeds: [embed] });
     return;
   }
 
-  // Handle /settings ai_channel
   if (subcommand === 'ai_channel') {
     const channel = interaction.options.getChannel('channel');
     
@@ -1958,7 +1396,6 @@ async function handleSettingsSlashCommand(interaction) {
     return;
   }
 
-  // Handle /settings response_chance
   if (subcommand === 'response_chance') {
     const percentage = interaction.options.getString('percentage');
     const chance = parseFloat(percentage);
@@ -1971,457 +1408,10 @@ async function handleSettingsSlashCommand(interaction) {
     await interaction.reply({ content: `✅ Response chance set to ${Math.round(chance * 100)}%.` });
     return;
   }
-
-  // Handle /settings spam_threshold
-  if (subcommand === 'spam_threshold') {
-    const count = interaction.options.getInteger('count');
-    
-    if (count < 1 || count > 20) {
-      return interaction.reply({ content: '❌ Please provide a value between 1 and 20.' });
-    }
-
-    await setServerSetting(guildId, 'spam_image_threshold', String(count));
-    await setServerSetting(guildId, 'spam_link_threshold', String(count));
-    await interaction.reply({ content: `✅ Spam threshold set to ${count} images/links. Users posting ${count}+ images or links in the autoban channel will be banned.` });
-    return;
-  }
-
-  // Handle /settings spam_window
-  if (subcommand === 'spam_window') {
-    const seconds = interaction.options.getInteger('seconds');
-    
-    if (seconds < 5 || seconds > 300) {
-      return interaction.reply({ content: '❌ Please provide a value between 5 and 300 seconds.' });
-    }
-
-    const ms = seconds * 1000;
-    await setServerSetting(guildId, 'spam_window_ms', String(ms));
-    await interaction.reply({ content: `✅ Spam window set to ${seconds} seconds.` });
-    return;
-  }
-}
-
-/** /remember — store a memory */
-async function handleRememberSlashCommand(interaction) {
-  const memory = interaction.options.getString('memory');
-
-  if (!ENABLE_DATABASE) {
-    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
-  }
-
-  const result = await semanticContextManager.storeMemory(
-    interaction.user.id,
-    interaction.user.username,
-    memory,
-    interaction.guildId
-  );
-
-  if (result) {
-    await interaction.reply({ content: `✅ I'll remember that: **${memory}**` });
-  } else {
-    await interaction.reply({ content: '❌ Failed to store memory. Please try again later.' });
-  }
-}
-
-/** /forget — remove a memory */
-async function handleForgetSlashCommand(interaction) {
-  const memoryId = interaction.options.getInteger('memory_id');
-
-  if (!ENABLE_DATABASE) {
-    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
-  }
-
-  const success = await semanticContextManager.removeMemory(memoryId, interaction.user.id);
-
-  if (success) {
-    await interaction.reply({ content: '✅ Memory forgotten' });
-  } else {
-    await interaction.reply({ content: '❌ Failed to forget memory. Make sure you own this memory and the ID is correct.' });
-  }
-}
-
-/** /memories — list user's memories */
-async function handleMemoriesSlashCommand(interaction) {
-  if (!ENABLE_DATABASE) {
-    return interaction.reply({ content: '❌ Memory storage is currently disabled (database not enabled in `.env`).' });
-  }
-
-  const memories = await semanticContextManager.getMemories(
-    interaction.user.id,
-    interaction.guildId
-  );
-
-  if (memories.length === 0) {
-    return interaction.reply({ content: 'ℹ️ You have no stored memories' });
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle('📝 Your Memories')
-    .setColor(0x5865f2)
-    .setFooter({ text: `Total memories: ${memories.length}` })
-    .setTimestamp();
-
-  memories.forEach(memory => {
-    embed.addFields({
-      name: `ID: ${memory.id} • ${new Date(memory.created_at).toLocaleDateString()}`,
-      value: memory.memory
-    });
-  });
-
-  await interaction.reply({ embeds: [embed] });
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
- * SECTION 14: LEGACY PREFIX COMMAND HANDLERS
- * Old-style !commands (e.g., !search, !info) for backwards compatibility
- * ───────────────────────────────────────────────────────────────────────────────*/
-
-async function handleSearchCommand(message, args) {
-  if (args.length === 0) {
-    return message.reply('Please provide a search query. Usage: `!search <query>` or use `/search`');
-  }
-
-  const query = args.join(' ');
-  const searchMessage = await message.reply(`🔍 Searching UnionCrax for: **${query}**...`);
-
-  try {
-    const unionCraxResult = await searchGoogleForUnionCraxGames(query);
-
-    if (unionCraxResult) {
-      await searchMessage.edit(`🔍 Found result on UnionCrax for: **${query}**`);
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🎮 ${unionCraxResult.title}`)
-        .setURL(unionCraxResult.url)
-        .setColor(0x0099ff)
-        .setDescription(unionCraxResult.description || 'No description available')
-        .addFields(
-          { name: '🌐 Source',    value: unionCraxResult.source,                                                    inline: true },
-          { name: '👁️ Views',    value: unionCraxResult.viewCount ? String(unionCraxResult.viewCount) : 'N/A',    inline: true },
-          { name: '⬇️ Downloads', value: unionCraxResult.downloadCount ? String(unionCraxResult.downloadCount) : 'N/A', inline: true },
-          { name: '💾 Size',      value: unionCraxResult.size || 'N/A',                                             inline: true },
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Game search result from UnionCrax' });
-
-      // Create action buttons
-      const gameButton = new ButtonBuilder()
-        .setLabel('🎮 Download Game')
-        .setStyle(ButtonStyle.Link)
-        .setURL(unionCraxResult.url);
-
-      const siteButton = new ButtonBuilder()
-        .setLabel('🌐 Visit UnionCrax')
-        .setStyle(ButtonStyle.Link)
-        .setURL('https://union-crax.xyz');
-
-      const actionRow = new ActionRowBuilder().addComponents(gameButton, siteButton);
-
-      await message.channel.send({ embeds: [embed], components: [actionRow] });
-    } else {
-      await searchMessage.edit(`🔍 No matching games found on UnionCrax for: **${query}**`);
-    }
-  } catch (error) {
-    logger.error(`Search error: ${error.message}`);
-    await searchMessage.edit('❌ An error occurred during the search. Please try again.');
-  }
-}
-
-async function handleInfoCommand(message) {
-  const uptime = Date.now() - START_TIME;
-
-  let dbStats = null;
-  if (isSemanticMode && ENABLE_DATABASE) {
-    dbStats = await semanticContextManager.getStatistics();
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle('🤖 UC-AIv2 Info')
-    .setColor(0x00ff00)
-    .addFields(
-      { name: '🧠 Model',    value: AI_MODEL || 'Not configured', inline: true },
-      { name: '⚙️ Mode',     value: isSemanticMode ? '🔮 Semantic' : '💬 Simple', inline: true },
-      { name: '⏱️ Uptime',   value: formatUptime(uptime), inline: true },
-      { name: '🗄️ Database', value: ENABLE_DATABASE ? '✅ Enabled' : '❌ Disabled', inline: true },
-      { name: '📣 Mentions', value: ENABLE_MENTIONS ? '✅ Enabled' : '❌ Disabled', inline: true },
-    );
-
-  if (dbStats) {
-    embed.addFields(
-      { name: '💬 Total Messages',  value: String(dbStats.total_messages),           inline: true },
-      { name: '🔗 With Embeddings', value: String(dbStats.messages_with_embeddings), inline: true },
-      { name: '📢 Channels',        value: String(dbStats.unique_channels),          inline: true },
-    );
-  }
-
-  message.channel.send({ embeds: [embed] });
-}
-
-async function handleLocationCommand(message) {
-  try {
-    const mem = process.memoryUsage();
-
-    const embed = new EmbedBuilder()
-      .setTitle('📍 Bot Location Information')
-      .setColor(0x0099ff)
-      .addFields(
-        { name: '📁 Working Directory', value: `\`${process.cwd()}\``,                         inline: false },
-        { name: '🖥️ Platform',          value: process.platform,                               inline: true  },
-        { name: '⚙️ Architecture',      value: process.arch,                                   inline: true  },
-        { name: '🟢 Node.js Version',   value: process.version,                                inline: true  },
-        { name: '🌍 Environment',       value: process.env.NODE_ENV || 'production',           inline: true  },
-        { name: '⏱️ Process Uptime',    value: `${Math.floor(process.uptime() / 60)} minutes`, inline: true  },
-        { name: '💾 Memory Usage',      value: `${Math.round(mem.heapUsed / 1024 / 1024)} MB`, inline: true  },
-      )
-      .setTimestamp()
-      .setFooter({ text: 'Bot runtime details' });
-
-    message.channel.send({ embeds: [embed] });
-  } catch (error) {
-    logger.error(`Location command error: ${error.message}`);
-    message.reply('❌ An error occurred while getting location information.');
-  }
-}
-
-/** !autoban — manage the autoban channel for spam detection */
-async function handleAutobanPrefixCommand(message, args) {
-  if (!message.guild) {
-    return message.reply('❌ This command can only be used in a server.');
-  }
-
-  const member = message.member;
-  const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
-  
-  if (!isAdmin) {
-    return message.reply('❌ Only Administrators can manage the autoban channel.');
-  }
-
-  if (!ENABLE_DATABASE) {
-    return message.reply('❌ Autoban channel management is currently disabled (database not enabled in `.env`).');
-  }
-
-  const subcommand = args[0]?.toLowerCase();
-
-  // Handle !autoban get
-  if (subcommand === 'get') {
-    const guildId = message.guild.id;
-    const channelId = await getAutobanChannel(guildId);
-    
-    if (channelId) {
-      return message.reply(`🛡️ The autoban channel for this server is set to <#${channelId}>. The 4 images/links rule will only apply in this channel.`);
-    } else {
-      return message.reply('🛡️ No autoban channel is set for this server. Use `!autoban set #channel` to configure one. Spam detection is currently disabled.');
-    }
-  }
-
-  // Handle !autoban set <channel>
-  if (subcommand === 'set') {
-    const channelMention = args[1];
-    if (!channelMention) {
-      return message.reply('❌ Please specify a channel. Usage: `!autoban set #channel`');
-    }
-
-    // Extract channel ID from mention
-    const channelId = channelMention.replace(/<#|>/g, '');
-    const channel = message.guild.channels.cache.get(channelId);
-    
-    if (!channel || !channel.isTextBased()) {
-      return message.reply('❌ Please specify a valid text channel.');
-    }
-
-    const success = await setAutobanChannel(message.guild.id, channel.id);
-    
-    if (success) {
-      return message.reply(`✅ Autoban channel has been set to <#${channel.id}>. The 4 images/links spam detection rule will now only apply in this channel.`);
-    } else {
-      return message.reply('❌ Failed to set autoban channel. Please try again.');
-    }
-  }
-
-  // Handle !autoban remove
-  if (subcommand === 'remove' || subcommand === 'delete') {
-    const success = await removeAutobanChannel(message.guild.id);
-    
-    if (success) {
-      return message.reply('✅ Autoban channel has been removed for this server. Spam detection is now disabled.');
-    } else {
-      return message.reply('❌ Failed to remove autoban channel. It may not have been set.');
-    }
-  }
-
-  // Show help if no valid subcommand
-  return message.reply(
-    '🛡️ **Autoban Command Usage:**\n' +
-    '`!autoban set #channel` - Set the channel for spam autoban\n' +
-    '`!autoban get` - View current autoban channel\n' +
-    '`!autoban remove` - Remove autoban channel\n\n' +
-    'The 4 images/links rule will only apply in the set channel.'
-  );
-}
-
-/** !settings — manage server settings */
-async function handleSettingsPrefixCommand(message, args) {
-  if (!message.guild) {
-    return message.reply('❌ This command can only be used in a server.');
-  }
-
-  const member = message.member;
-  const isAdmin = member && member.permissions.has(PermissionFlagsBits.Administrator);
-  
-  if (!isAdmin) {
-    return message.reply('❌ Only Administrators can manage server settings.');
-  }
-
-  if (!ENABLE_DATABASE) {
-    return message.reply('❌ Server settings are currently disabled (database not enabled in `.env`).');
-  }
-
-  const subcommand = args[0]?.toLowerCase();
-  const guildId = message.guild.id;
-
-  // Handle !settings view
-  if (subcommand === 'view' || subcommand === 'list') {
-    const settings = await getAllServerSettings(guildId);
-    const autobanChannel = await getAutobanChannel(guildId);
-    
-    const embed = new EmbedBuilder()
-      .setTitle('⚙️ Server Settings')
-      .setColor(0x5865f2)
-      .setTimestamp();
-
-    // AI Channel
-    const aiChannel = settings.ai_channel;
-    embed.addFields({
-      name: '🤖 AI Channel',
-      value: aiChannel ? `<#${aiChannel}>` : (CHANNEL_ID ? `<#${CHANNEL_ID}>` : 'Not set'),
-      inline: true
-    });
-
-    // Response Chance
-    const responseChance = settings.random_response_chance || String(RANDOM_RESPONSE_CHANCE);
-    embed.addFields({
-      name: '📊 Response Chance',
-      value: `${Math.round(parseFloat(responseChance) * 100)}%`,
-      inline: true
-    });
-
-    // Autoban Channel
-    embed.addFields({
-      name: '🛡️ Autoban Channel',
-      value: autobanChannel ? `<#${autobanChannel}>` : 'Not set (disabled)',
-      inline: true
-    });
-
-    // Spam Thresholds
-    const spamImageThreshold = settings.spam_image_threshold || String(SPAM_IMAGE_THRESHOLD);
-    const spamLinkThreshold = settings.spam_link_threshold || String(SPAM_LINK_THRESHOLD);
-    const spamWindow = settings.spam_window_ms || String(SPAM_WINDOW_MS);
-    
-    embed.addFields({
-      name: '🚫 Spam Image Threshold',
-      value: `${spamImageThreshold} images`,
-      inline: true
-    });
-
-    embed.addFields({
-      name: '🚫 Spam Link Threshold',
-      value: `${spamLinkThreshold} links`,
-      inline: true
-    });
-
-    embed.addFields({
-      name: '⏱️ Spam Window',
-      value: `${parseInt(spamWindow) / 1000} seconds`,
-      inline: true
-    });
-
-    return message.reply({ embeds: [embed] });
-  }
-
-  // Handle !settings ai_channel
-  if (subcommand === 'ai_channel' || subcommand === 'aichannel') {
-    const channelMention = args[1];
-    
-    if (channelMention) {
-      const channelId = channelMention.replace(/<#|>/g, '');
-      const channel = message.guild.channels.cache.get(channelId);
-      
-      if (!channel) {
-        return message.reply('❌ Please specify a valid channel.');
-      }
-      
-      await setServerSetting(guildId, 'ai_channel', channel.id);
-      return message.reply(`✅ AI channel set to <#${channel.id}>. The bot will respond in this channel.`);
-    } else {
-      await removeServerSetting(guildId, 'ai_channel');
-      return message.reply('✅ AI channel has been reset. The bot will use the default channel from .env.');
-    }
-  }
-
-  // Handle !settings response_chance
-  if (subcommand === 'response_chance' || subcommand === 'chance') {
-    const percentage = args[1];
-    if (!percentage) {
-      return message.reply('❌ Please provide a value. Usage: `!settings response_chance 0.1` (0.0 to 1.0)');
-    }
-    
-    const chance = parseFloat(percentage);
-    if (isNaN(chance) || chance < 0 || chance > 1) {
-      return message.reply('❌ Please provide a value between 0.0 and 1.0 (e.g., 0.1 = 10%).');
-    }
-
-    await setServerSetting(guildId, 'random_response_chance', String(chance));
-    return message.reply(`✅ Response chance set to ${Math.round(chance * 100)}%.`);
-  }
-
-  // Handle !settings spam_threshold
-  if (subcommand === 'spam_threshold' || subcommand === 'threshold') {
-    const count = args[1];
-    if (!count) {
-      return message.reply('❌ Please provide a value. Usage: `!settings spam_threshold 4` (1-20)');
-    }
-    
-    const countNum = parseInt(count);
-    if (isNaN(countNum) || countNum < 1 || countNum > 20) {
-      return message.reply('❌ Please provide a value between 1 and 20.');
-    }
-
-    await setServerSetting(guildId, 'spam_image_threshold', String(countNum));
-    await setServerSetting(guildId, 'spam_link_threshold', String(countNum));
-    return message.reply(`✅ Spam threshold set to ${countNum} images/links. Users posting ${countNum}+ images or links in the autoban channel will be banned.`);
-  }
-
-  // Handle !settings spam_window
-  if (subcommand === 'spam_window' || subcommand === 'window') {
-    const seconds = args[1];
-    if (!seconds) {
-      return message.reply('❌ Please provide a value. Usage: `!settings spam_window 30` (5-300 seconds)');
-    }
-    
-    const secondsNum = parseInt(seconds);
-    if (isNaN(secondsNum) || secondsNum < 5 || secondsNum > 300) {
-      return message.reply('❌ Please provide a value between 5 and 300 seconds.');
-    }
-
-    const ms = secondsNum * 1000;
-    await setServerSetting(guildId, 'spam_window_ms', String(ms));
-    return message.reply(`✅ Spam window set to ${secondsNum} seconds.`);
-  }
-
-  // Show help if no valid subcommand
-  return message.reply(
-    '⚙️ **Settings Command Usage:**\n' +
-    '`!settings view` - View all server settings\n' +
-    '`!settings ai_channel #channel` - Set the AI response channel\n' +
-    '`!settings ai_channel` - Reset AI channel to default\n' +
-    '`!settings response_chance 0.1` - Set response chance (0.0-1.0)\n' +
-    '`!settings spam_threshold 4` - Set images/links threshold (1-20)\n' +
-    '`!settings spam_window 30` - Set spam detection window (5-300 seconds)'
-  );
-}
-
-/*══════════════════════════════════════════════════════════════════════════*
- * SECTION 15: SEARCH HELPERS
+ * SECTION 13: SEARCH HELPERS
  * Functions for searching UnionCrax game database and web search
  * ───────────────────────────────────────────────────────────────────────────────*/
 const UNION_CRAX_API_BASE = 'https://union-crax.xyz';
@@ -2580,7 +1570,7 @@ async function performWebSearch(query) {
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
- * SECTION 16: SHUTDOWN & LOGIN
+ * SECTION 14: SHUTDOWN & LOGIN
  * Graceful shutdown handlers and bot login
  * ───────────────────────────────────────────────────────────────────────────────*/
 async function shutdown() {

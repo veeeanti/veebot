@@ -287,9 +287,11 @@ class SemanticContextManager {
      * Get database statistics for the /info command
      * Returns counts of messages, channels, and embeddings
      */
-     async getStatistics() {
+    async getStatistics() {
         try {
-            const { DB_TYPE, pgPool, sqliteDb } = require('./database.js');
+            // Import the required variables from database module
+            const db = await import('./database.js');
+            const { DB_TYPE, pgPool, sqliteDb } = db;
             
             if (DB_TYPE === 'postgres') {
                 const result = await pgPool.query(`
