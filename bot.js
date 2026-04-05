@@ -142,6 +142,20 @@ const commands = [
     contexts: [0, 1, 2],
   },
   {
+    name: 'echo',
+    description: 'Echo back the text you provide',
+    options: [
+      {
+        name: 'text',
+        description: 'The text to echo back',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+  },
+  {
     name: 'birthday',
     description: 'Manage your birthday',
     options: [
@@ -630,6 +644,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'info':
         await handleInfoSlashCommand(interaction);
         break;
+      case 'echo':
+        await handleEchoSlashCommand(interaction);
+        break;
       case 'location':
         await handleLocationSlashCommand(interaction);
         break;
@@ -1088,6 +1105,11 @@ async function handleInfoSlashCommand(interaction) {
   embed.setTimestamp().setFooter({ text: `Bot ID: ${client.user.id}` });
 
   await interaction.reply({ embeds: [embed] });
+}
+
+async function handleEchoSlashCommand(interaction) {
+  const text = interaction.options.getString('text');
+  await interaction.reply(text);
 }
 
 async function handleLocationSlashCommand(interaction) {
